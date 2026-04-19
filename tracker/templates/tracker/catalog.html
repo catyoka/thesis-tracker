@@ -1,0 +1,79 @@
+{% extends "tracker/base.html" %}
+
+{% block title %}
+  {% if selected_media_type == "MANGA" %}Manga{% else %}Anime{% endif %} · betteranilist
+{% endblock %}
+{% block page_title %}
+  Browse {% if selected_media_type == "MANGA" %}Manga{% else %}Anime{% endif %}
+{% endblock %}
+
+{% block content %}
+  <div class="card" style="margin-bottom: 16px;">
+    <h2 style="margin-bottom: 8px;">Catalog</h2>
+    <form method="get" class="row">
+      <div class="field">
+        <label for="q">Search title</label>
+        <input id="q" type="text" name="q" value="{{ query }}" placeholder="Search by title..." />
+      </div>
+      <div class="field" style="min-width: 160px;">
+        <button class="primary" type="submit">Search</button>
+      </div>
+    </form>
+  </div>
+
+  <div class="card">
+    <h2 style="margin-bottom: 10px;">Results ({{ item_rows|length }})</h2>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Title</th>
+            <th>Type</th>
+            <th>Current list status</th>
+            <th>Add/Update</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in item_rows %}
+            <tr>
+              <td>
+                <div style="font-weight: 650;">{{ row.item.title }}</div>
+                <div class="muted" style="font-size: 12px;">
+                  <code>{{ row.item.external_id }}</code>
+                </div>
+              </td>
+              <td>{{ row.item.get_media_type_display }}</td>
+              <td>
+                {% if row.user_status %}
+                  <code>{{ row.user_status }}</code>
+                {% else %}
+                  <span class="muted">Not in your list</span>
+                {% endif %}
+              </td>
+              <td>
+                <form method="post" action="{% url 'tracker:catalog_add' row.item.id %}" class="row">
+                  {% csrf_token %}
+                  <div class="field" style="min-width: 180px;">
+                    <label style="margin-bottom: 0;">Status</label>
+                    <select name="status">
+                      {% for value,label in status_choices %}
+                        <option value="{{ value }}" {% if value == "PLANNED" %}selected{% endif %}>{{ label }}</option>
+                      {% endfor %}
+                    </select>
+                  </div>
+                  <div class="field" style="min-width: 160px;">
+                    <button class="primary" type="submit">Save to my list</button>
+                  </div>
+                </form>
+              </td>
+            </tr>
+          {% empty %}
+            <tr>
+              <td colspan="4" class="muted">No catalog entries found.</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+{% endblock %}

@@ -1,0 +1,333 @@
+{% extends "tracker/base.html" %}
+
+{% block title %}Library · betteranilist{% endblock %}
+{% block page_title %}Your Library{% endblock %}
+
+{% block content %}
+  <div class="card" style="margin-bottom: 16px;">
+    <h2 style="margin-bottom: 6px;">Filters</h2>
+    <div class="muted" style="margin-bottom: 12px; font-size: 13px;">
+      Filters are server-side (page reload). Actions below use the JSON API.
+    </div>
+
+    <form method="get" class="row">
+      <div class="field">
+        <label for="status">Status</label>
+        <select id="status" name="status">
+          <option value="" {% if not status_filter %}selected{% endif %}>All</option>
+          {% for value,label in status_choices %}
+            <option value="{{ value }}" {% if status_filter == value %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="field">
+        <label for="media_type">Media type</label>
+        <select id="media_type" name="media_type">
+          <option value="" {% if not media_type_filter %}selected{% endif %}>All</option>
+          {% for value,label in media_type_choices %}
+            <option value="{{ value }}" {% if media_type_filter == value %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="field" style="min-width: 140px;">
+        <button class="primary" type="submit">Apply</button>
+      </div>
+    </form>
+  </div>
+
+  <div class="card" style="margin-bottom: 16px;">
+    <h2 style="margin-bottom: 6px;">Add entry</h2>
+    <div class="muted" style="margin-bottom: 12px; font-size: 13px;">
+      Minimal manual add for now. Later you can replace this with external catalog search.
+    </div>
+
+    <form id="add-form" class="row">
+      <div class="field">
+        <label for="external_id">External ID</label>
+        <input id="external_id" name="external_id" placeholder="e.g. anilist:12345" required />
+      </div>
+      <div class="field">
+        <label for="title">Title</label>
+        <input id="title" name="title" placeholder="e.g. Steins;Gate" required />
+      </div>
+      <div class="field">
+        <label for="add_media_type">Media type</label>
+        <select id="add_media_type" name="media_type" required>
+          {% for value,label in media_type_choices %}
+            <option value="{{ value }}">{{ label }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="field">
+        <label for="add_status">Status</label>
+        <select id="add_status" name="status" required>
+          {% for value,label in status_choices %}
+            <option value="{{ value }}" {% if value == "PLANNED" %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="field" style="min-width: 160px;">
+        <button class="primary" type="submit">Create</button>
+      </div>
+    </form>
+
+    <div id="add-flash" class="flash"></div>
+  </div>
+
+  <div class="card">
+    <h2 style="margin-bottom: 6px;">Entries ({{ entries|length }})</h2>
+    <div class="muted" style="margin-bottom: 12px; font-size: 13px;">
+      Sorted by <code>updated_at</code> (desc). Quick actions update via API then reload.
+    </div>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Title</th>
+            <th>Type</th>
+            <th>Status</th>
+            <th>Progress</th>
+            <th>Rating</th>
+            <th>Updated</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for e in entries %}
+            <tr data-entry-id="{{ e.id }}">
+              <td>
+                <div style="font-weight: 650;">{{ e.title }}</div>
+                <div class="muted" style="font-size: 12px;">external_id: <code>{{ e.external_id }}</code></div>
+              </td>
+              <td>{{ e.get_media_type_display }}</td>
+              <td><code>{{ e.status }}</code></td>
+              <td style="white-space: nowrap;">
+                <span class="js-progress">{{ e.progress }}</span>
+                <span class="actions" style="display: inline-flex; margin-left: 8px;">
+                  <button type="button" class="js-progress-dec" title="-1">-</button>
+                  <button type="button" class="js-progress-inc" title="+1">+</button>
+                </span>
+              </td>
+              <td>{% if e.rating %}{{ e.rating }}{% else %}<span class="muted">—</span>{% endif %}</td>
+              <td style="white-space: nowrap;">{{ e.updated_at|date:"Y-m-d H:i" }}</td>
+              <td>
+                <div class="actions">
+                  <button type="button" class="js-mark-completed">Mark completed</button>
+                  <button type="button" class="js-edit">Edit</button>
+                  <button type="button" class="danger js-delete">Delete</button>
+                </div>
+              </td>
+            </tr>
+            <tr data-entry-edit-for="{{ e.id }}" style="display: none;">
+              <td colspan="7">
+                <div class="row" style="align-items: end;">
+                  <div class="field">
+                    <label>Rating (1-10 or empty)</label>
+                    <input class="js-edit-rating" type="number" min="1" max="10" placeholder="(empty clears)" />
+                  </div>
+                  <div class="field" style="min-width: 260px;">
+                    <label>Status</label>
+                    <select class="js-edit-status">
+                      {% for value,label in status_choices %}
+                        <option value="{{ value }}">{{ label }}</option>
+                      {% endfor %}
+                    </select>
+                  </div>
+                  <div class="field" style="min-width: 360px;">
+                    <label>Notes</label>
+                    <input class="js-edit-notes" type="text" placeholder="Short note…" />
+                  </div>
+                  <div class="field" style="min-width: 220px;">
+                    <div class="actions">
+                      <button type="button" class="primary js-save">Save</button>
+                      <button type="button" class="js-cancel">Cancel</button>
+                    </div>
+                  </div>
+                </div>
+                <div class="flash js-edit-flash" style="margin-top: 10px;"></div>
+              </td>
+            </tr>
+          {% empty %}
+            <tr>
+              <td colspan="7" class="muted">No entries yet. Add one above.</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <script>
+    function getCookie(name) {
+      const value = `; ${document.cookie}`;
+      const parts = value.split(`; ${name}=`);
+      if (parts.length === 2) return parts.pop().split(';').shift();
+      return null;
+    }
+
+    async function apiFetch(url, { method = "GET", body = null } = {}) {
+      const headers = { "Accept": "application/json" };
+      const opts = { method, headers, credentials: "same-origin" };
+
+      const needsCsrf = !["GET", "HEAD", "OPTIONS", "TRACE"].includes(method.toUpperCase());
+      if (needsCsrf) {
+        headers["X-CSRFToken"] = getCookie("csrftoken");
+      }
+
+      if (body !== null) {
+        headers["Content-Type"] = "application/json";
+        opts.body = JSON.stringify(body);
+      }
+
+      const resp = await fetch(url, opts);
+      if (resp.status === 204) return { ok: true, _noContent: true };
+      let data = null;
+      try { data = await resp.json(); } catch (e) { /* ignore */ }
+      if (!resp.ok) {
+        const msg = (data && data.message) ? data.message : `Request failed (${resp.status})`;
+        const err = new Error(msg);
+        err.status = resp.status;
+        err.data = data;
+        throw err;
+      }
+      return data;
+    }
+
+    function setFlash(el, kind, text, extra) {
+      const cls = kind === "ok" ? "ok" : "err";
+      const details = extra ? `<div class="muted" style="font-size: 12px; margin-top: 6px;">${extra}</div>` : "";
+      el.innerHTML = `<div class="${cls}">${text}</div>${details}`;
+    }
+
+    document.getElementById("add-form").addEventListener("submit", async (ev) => {
+      ev.preventDefault();
+      const flash = document.getElementById("add-flash");
+      flash.innerHTML = "";
+
+      const form = ev.target;
+      const payload = {
+        external_id: form.external_id.value,
+        title: form.title.value,
+        media_type: form.media_type.value,
+        status: form.status.value,
+      };
+
+      try {
+        await apiFetch("{% url 'tracker:api_library_list_create' %}", { method: "POST", body: payload });
+        setFlash(flash, "ok", "Created. Reloading…");
+        window.location.reload();
+      } catch (e) {
+        const extra = e.data && e.data.errors ? JSON.stringify(e.data.errors) : null;
+        setFlash(flash, "err", e.message, extra);
+      }
+    });
+
+    document.querySelectorAll(".js-mark-completed").forEach((btn) => {
+      btn.addEventListener("click", async (ev) => {
+        const row = ev.target.closest("tr[data-entry-id]");
+        const id = row.getAttribute("data-entry-id");
+        try {
+          await apiFetch(`/api/library/${id}/`, { method: "PATCH", body: { status: "COMPLETED" } });
+          window.location.reload();
+        } catch (e) {
+          alert(e.message);
+        }
+      });
+    });
+
+    document.querySelectorAll(".js-delete").forEach((btn) => {
+      btn.addEventListener("click", async (ev) => {
+        const row = ev.target.closest("tr[data-entry-id]");
+        const id = row.getAttribute("data-entry-id");
+        if (!confirm("Delete this entry?")) return;
+        try {
+          await apiFetch(`/api/library/${id}/`, { method: "DELETE" });
+          window.location.reload();
+        } catch (e) {
+          alert(e.message);
+        }
+      });
+    });
+
+    function toggleEditRow(id, show) {
+      const editRow = document.querySelector(`tr[data-entry-edit-for="${id}"]`);
+      if (!editRow) return;
+      editRow.style.display = show ? "" : "none";
+    }
+
+    document.querySelectorAll(".js-edit").forEach((btn) => {
+      btn.addEventListener("click", async (ev) => {
+        const row = ev.target.closest("tr[data-entry-id]");
+        const id = row.getAttribute("data-entry-id");
+        const editRow = document.querySelector(`tr[data-entry-edit-for="${id}"]`);
+        const flash = editRow.querySelector(".js-edit-flash");
+        flash.innerHTML = "";
+        try {
+          const data = await apiFetch(`/api/library/${id}/`);
+          editRow.querySelector(".js-edit-rating").value = data.result.rating ?? "";
+          editRow.querySelector(".js-edit-status").value = data.result.status;
+          editRow.querySelector(".js-edit-notes").value = data.result.notes ?? "";
+          toggleEditRow(id, true);
+        } catch (e) {
+          alert(e.message);
+        }
+      });
+    });
+
+    document.querySelectorAll(".js-cancel").forEach((btn) => {
+      btn.addEventListener("click", (ev) => {
+        const editRow = ev.target.closest("tr[data-entry-edit-for]");
+        const id = editRow.getAttribute("data-entry-edit-for");
+        toggleEditRow(id, false);
+      });
+    });
+
+    document.querySelectorAll(".js-save").forEach((btn) => {
+      btn.addEventListener("click", async (ev) => {
+        const editRow = ev.target.closest("tr[data-entry-edit-for]");
+        const id = editRow.getAttribute("data-entry-edit-for");
+        const flash = editRow.querySelector(".js-edit-flash");
+        flash.innerHTML = "";
+
+        const ratingRaw = editRow.querySelector(".js-edit-rating").value;
+        const payload = {
+          status: editRow.querySelector(".js-edit-status").value,
+          notes: editRow.querySelector(".js-edit-notes").value,
+          rating: ratingRaw === "" ? null : Number(ratingRaw),
+        };
+
+        try {
+          await apiFetch(`/api/library/${id}/`, { method: "PATCH", body: payload });
+          window.location.reload();
+        } catch (e) {
+          const extra = e.data && e.data.errors ? JSON.stringify(e.data.errors) : null;
+          setFlash(flash, "err", e.message, extra);
+        }
+      });
+    });
+
+    async function adjustProgress(id, delta) {
+      const data = await apiFetch(`/api/library/${id}/`);
+      const next = Math.max(0, (data.result.progress || 0) + delta);
+      await apiFetch(`/api/library/${id}/`, { method: "PATCH", body: { progress: next } });
+      window.location.reload();
+    }
+
+    document.querySelectorAll(".js-progress-inc").forEach((btn) => {
+      btn.addEventListener("click", async (ev) => {
+        const row = ev.target.closest("tr[data-entry-id]");
+        const id = row.getAttribute("data-entry-id");
+        try { await adjustProgress(id, +1); } catch (e) { alert(e.message); }
+      });
+    });
+    document.querySelectorAll(".js-progress-dec").forEach((btn) => {
+      btn.addEventListener("click", async (ev) => {
+        const row = ev.target.closest("tr[data-entry-id]");
+        const id = row.getAttribute("data-entry-id");
+        try { await adjustProgress(id, -1); } catch (e) { alert(e.message); }
+      });
+    });
+  </script>
+{% endblock %}
+

@@ -1,0 +1,45 @@
+{% extends "tracker/base.html" %}
+
+{% block title %}Sign up · betteranilist{% endblock %}
+{% block page_title %}Create Account{% endblock %}
+
+{% block content %}
+  <div class="card" style="max-width: 640px;">
+    <h2 style="margin-bottom: 6px;">Create your account</h2>
+    <div class="muted" style="margin-bottom: 14px; font-size: 13px;">
+      Create an account to track anime and manga lists.
+    </div>
+    <form method="post">
+      {% csrf_token %}
+      <div class="row">
+        <div class="field" style="min-width: 100%;">
+          <label for="{{ form.username.id_for_label }}">Username</label>
+          {{ form.username }}
+          {% if form.username.errors %}
+            <div class="flash"><div class="err">{{ form.username.errors|join:", " }}</div></div>
+          {% endif %}
+        </div>
+        <div class="field" style="min-width: 100%;">
+          <label for="{{ form.password1.id_for_label }}">Password</label>
+          {{ form.password1 }}
+          {% if form.password1.errors %}
+            <div class="flash"><div class="err">{{ form.password1.errors|join:", " }}</div></div>
+          {% endif %}
+        </div>
+        <div class="field" style="min-width: 100%;">
+          <label for="{{ form.password2.id_for_label }}">Confirm password</label>
+          {{ form.password2 }}
+          {% if form.password2.errors %}
+            <div class="flash"><div class="err">{{ form.password2.errors|join:", " }}</div></div>
+          {% endif %}
+        </div>
+        <div class="field" style="min-width: 180px;">
+          <button class="primary" type="submit">Create account</button>
+        </div>
+      </div>
+    </form>
+    <div class="muted" style="margin-top: 12px; font-size: 13px;">
+      Already have an account? <a href="{% url 'login' %}">Login</a>.
+    </div>
+  </div>
+{% endblock %}
