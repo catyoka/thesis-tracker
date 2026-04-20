@@ -10,6 +10,12 @@
 {% block content %}
   <div class="card" style="margin-bottom: 16px;">
     <h2 style="margin-bottom: 8px;">Catalog</h2>
+    <div class="muted" style="margin-bottom: 12px; font-size: 13px;">
+      {{ source_note }}
+      {% if source_error %}
+        <span style="color: #ff6a6a;">{{ source_error }}</span>
+      {% endif %}
+    </div>
     <form method="get" class="row">
       <div class="field">
         <label for="q">Search title</label>
@@ -38,9 +44,19 @@
             <tr>
               <td>
                 <div style="font-weight: 650;">{{ row.item.title }}</div>
+                {% if row.item.cover_image_url %}
+                  <div style="margin-top: 8px;">
+                    <img src="{{ row.item.cover_image_url }}" alt="{{ row.item.title }}" style="height: 88px; border-radius: 8px;" />
+                  </div>
+                {% endif %}
                 <div class="muted" style="font-size: 12px;">
                   <code>{{ row.item.external_id }}</code>
                 </div>
+                {% if row.item.description %}
+                  <div class="muted" style="font-size: 12px; margin-top: 6px; max-width: 420px;">
+                    {{ row.item.description|striptags|truncatechars:220 }}
+                  </div>
+                {% endif %}
               </td>
               <td>{{ row.item.get_media_type_display }}</td>
               <td>

@@ -6,7 +6,7 @@ app_name = "tracker"
 
 urlpatterns = [
     # HTML pages
-    path("", views.home_redirect, name="home"),
+    path("", views.home_page, name="home"),
     path("signup/", views.signup_page, name="signup"),
     path("anime/", views.media_catalog_page, {"media_type": "ANIME"}, name="anime_catalog"),
     path("manga/", views.media_catalog_page, {"media_type": "MANGA"}, name="manga_catalog"),

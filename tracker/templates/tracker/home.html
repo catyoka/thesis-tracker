@@ -1,0 +1,67 @@
+{% extends "tracker/base.html" %}
+
+{% block title %}Home · betteranilist{% endblock %}
+{% block page_title %}Home{% endblock %}
+
+{% block content %}
+  <div class="card" style="margin-bottom: 16px;">
+    <h2 style="margin-bottom: 6px;">Welcome back</h2>
+    <div class="muted" style="font-size: 14px;">
+      Track your anime and manga list like AniList.
+    </div>
+  </div>
+
+  <div class="row" style="margin-bottom: 16px;">
+    <div class="card field">
+      <h2 style="margin-bottom: 4px;">Total entries</h2>
+      <div style="font-size: 30px; font-weight: 700;">{{ total_count }}</div>
+    </div>
+    <div class="card field">
+      <h2 style="margin-bottom: 4px;">Anime</h2>
+      <div style="font-size: 30px; font-weight: 700;">{{ anime_count }}</div>
+    </div>
+    <div class="card field">
+      <h2 style="margin-bottom: 4px;">Manga</h2>
+      <div style="font-size: 30px; font-weight: 700;">{{ manga_count }}</div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-bottom: 16px;">
+    <h2 style="margin-bottom: 8px;">Quick actions</h2>
+    <div class="actions">
+      <a href="{% url 'tracker:anime_catalog' %}"><button type="button" class="primary">Search Anime</button></a>
+      <a href="{% url 'tracker:manga_catalog' %}"><button type="button" class="primary">Search Manga</button></a>
+      <a href="{% url 'tracker:library' %}"><button type="button">Open My List</button></a>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2 style="margin-bottom: 8px;">Recently updated</h2>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Title</th>
+            <th>Type</th>
+            <th>Status</th>
+            <th>Updated</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for entry in recent_entries %}
+            <tr>
+              <td>{{ entry.title }}</td>
+              <td>{{ entry.get_media_type_display }}</td>
+              <td><code>{{ entry.status }}</code></td>
+              <td>{{ entry.updated_at|date:"Y-m-d H:i" }}</td>
+            </tr>
+          {% empty %}
+            <tr>
+              <td colspan="4" class="muted">No entries yet. Start by searching anime or manga.</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+{% endblock %}

@@ -9,6 +9,7 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 
+from .anilist import fetch_media_catalog
 from .models import CatalogItem, LibraryEntry
 
 
@@ -69,10 +70,26 @@ def _serialize_entry(entry: LibraryEntry) -> dict:
         "updated_at": entry.updated_at.isoformat(),
     }
 
-def home_redirect(request: HttpRequest) -> HttpResponse:
-    if request.user.is_authenticated:
-        return redirect("tracker:anime_catalog")
-    return redirect("login")
+def home_page(request: HttpRequest) -> HttpResponse:
+    if not request.user.is_authenticated:
+        return redirect("login")
+
+    user_entries = LibraryEntry.objects.filter(user=request.user)
+    anime_count = user_entries.filter(media_type=LibraryEntry.MediaType.ANIME).count()
+    manga_count = user_entries.filter(media_type=LibraryEntry.MediaType.MANGA).count()
+    total_count = anime_count + manga_count
+    recent_entries = user_entries.order_by("-updated_at")[:5]
+
+    return render(
+        request,
+        "tracker/home.html",
+        {
+            "total_count": total_count,
+            "anime_count": anime_count,
+            "manga_count": manga_count,
+            "recent_entries": recent_entries,
+        },
+    )
 
 
 @require_http_methods(["GET", "POST"])
@@ -121,10 +138,45 @@ def media_catalog_page(request: HttpRequest, media_type: str) -> HttpResponse:
         return redirect("tracker:anime_catalog")
 
     query = (request.GET.get("q") or "").strip()
+    source_note = "Showing Top 50 popular titles from AniList."
+    source_error = ""
+    preferred_external_ids: list[str] = []
+
+    try:
+        remote_items = fetch_media_catalog(
+            normalized_type,
+            query,
+            per_page=50,
+        )
+        preferred_external_ids = [data["external_id"] for data in remote_items]
+        for data in remote_items:
+            CatalogItem.objects.update_or_create(
+                external_id=data["external_id"],
+                defaults={
+                    "title": data["title"],
+                    "media_type": data["media_type"],
+                    "description": data["description"],
+                    "cover_image_url": data["cover_image_url"],
+                },
+            )
+        if query:
+            source_note = "Showing AniList search results (up to 50), cached locally."
+    except RuntimeError:
+        source_error = "AniList API is unavailable right now, showing cached data only."
+        if query:
+            source_note = "Showing locally cached search results."
+        else:
+            source_note = "Showing locally cached popular list."
+
     catalog_qs = CatalogItem.objects.filter(media_type=normalized_type)
     if query:
         catalog_qs = catalog_qs.filter(title__icontains=query)
-    catalog_items = list(catalog_qs.order_by("title"))
+    if preferred_external_ids:
+        catalog_items = list(catalog_qs.filter(external_id__in=preferred_external_ids))
+        position = {external_id: idx for idx, external_id in enumerate(preferred_external_ids)}
+        catalog_items.sort(key=lambda item: position.get(item.external_id, 10**9))
+    else:
+        catalog_items = list(catalog_qs.order_by("title")[:50])
 
     user_entries = LibraryEntry.objects.filter(
         user=request.user,
@@ -151,6 +203,8 @@ def media_catalog_page(request: HttpRequest, media_type: str) -> HttpResponse:
             "status_choices": LibraryEntry.Status.choices,
             "selected_media_type": normalized_type,
             "query": query,
+            "source_note": source_note,
+            "source_error": source_error,
         },
     )
 
