@@ -1,0 +1,97 @@
+{% extends "tracker/base.html" %}
+
+{% block title %}{{ item.title }} · betteranilist{% endblock %}
+{% block page_title %}{{ item.title }}{% endblock %}
+
+{% block content %}
+  <div class="card" style="margin-bottom: 16px;">
+    <div class="actions" style="margin-bottom: 10px;">
+      {% if item.media_type == "MANGA" %}
+        <a href="{% url 'tracker:manga_catalog' %}">&larr; Back to Manga</a>
+      {% else %}
+        <a href="{% url 'tracker:anime_catalog' %}">&larr; Back to Anime</a>
+      {% endif %}
+    </div>
+
+    {% if detail_error %}
+      <div class="flash"><div class="err">{{ detail_error }}</div></div>
+    {% endif %}
+
+    <div class="row" style="align-items: flex-start;">
+      <div style="min-width: 180px;">
+        {% if item.cover_image_url %}
+          <img src="{{ item.cover_image_url }}" alt="{{ item.title }}" style="width: 180px; border-radius: 10px;" />
+        {% endif %}
+      </div>
+      <div class="field">
+        <h2 style="margin-bottom: 8px;">Details</h2>
+        <div class="muted" style="font-size: 13px; margin-bottom: 8px;">
+          <code>{{ item.external_id }}</code> · {{ item.get_media_type_display }}
+        </div>
+        {% if detail_data.siteUrl %}
+          <div style="margin-bottom: 8px;"><a href="{{ detail_data.siteUrl }}" target="_blank" rel="noopener">Open on AniList</a></div>
+        {% endif %}
+        <div class="muted" style="font-size: 14px; line-height: 1.5;">
+          {% if item.description %}
+            {{ item.description|striptags }}
+          {% else %}
+            No description available.
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-bottom: 16px;">
+    <h2 style="margin-bottom: 8px;">Metadata</h2>
+    <div class="row">
+      {% if detail_data.averageScore %}
+        <div class="field"><label>Average score</label><div>{{ detail_data.averageScore }}</div></div>
+      {% endif %}
+      {% if detail_data.format %}
+        <div class="field"><label>Format</label><div>{{ detail_data.format }}</div></div>
+      {% endif %}
+      {% if detail_data.status %}
+        <div class="field"><label>Release status</label><div>{{ detail_data.status }}</div></div>
+      {% endif %}
+      {% if detail_data.episodes %}
+        <div class="field"><label>Episodes</label><div>{{ detail_data.episodes }}</div></div>
+      {% endif %}
+      {% if detail_data.chapters %}
+        <div class="field"><label>Chapters</label><div>{{ detail_data.chapters }}</div></div>
+      {% endif %}
+      {% if detail_data.volumes %}
+        <div class="field"><label>Volumes</label><div>{{ detail_data.volumes }}</div></div>
+      {% endif %}
+    </div>
+    {% if detail_data.genres %}
+      <div class="muted" style="margin-top: 12px;">Genres: {{ detail_data.genres|join:", " }}</div>
+    {% endif %}
+  </div>
+
+  <div class="card">
+    <h2 style="margin-bottom: 8px;">Add / Update in your list</h2>
+    {% if user_entry %}
+      <div class="muted" style="margin-bottom: 10px;">
+        Current status: <code>{{ user_entry.status }}</code> · Progress: {{ user_entry.progress }}
+      </div>
+    {% else %}
+      <div class="muted" style="margin-bottom: 10px;">This title is not in your list yet.</div>
+    {% endif %}
+    <form method="post" action="{% url 'tracker:catalog_add' item.id %}" class="row">
+      {% csrf_token %}
+      <input type="hidden" name="next" value="{{ request.path }}" />
+      <div class="field" style="min-width: 220px;">
+        <label>Status</label>
+        <select name="status">
+          {% for value,label in status_choices %}
+            <option value="{{ value }}" {% if user_entry and user_entry.status == value %}selected{% elif not user_entry and value == "PLANNED" %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="field" style="min-width: 200px;">
+        <button type="submit" class="primary">{% if user_entry %}Update my list{% else %}Save to my list{% endif %}</button>
+      </div>
+    </form>
+  </div>
+{% endblock %}

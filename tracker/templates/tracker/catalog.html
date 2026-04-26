@@ -43,7 +43,13 @@
           {% for row in item_rows %}
             <tr>
               <td>
-                <div style="font-weight: 650;">{{ row.item.title }}</div>
+                <div style="font-weight: 650;">
+                  {% if row.item.media_type == "MANGA" %}
+                    <a href="{% url 'tracker:manga_detail' row.item.id %}">{{ row.item.title }}</a>
+                  {% else %}
+                    <a href="{% url 'tracker:anime_detail' row.item.id %}">{{ row.item.title }}</a>
+                  {% endif %}
+                </div>
                 {% if row.item.cover_image_url %}
                   <div style="margin-top: 8px;">
                     <img src="{{ row.item.cover_image_url }}" alt="{{ row.item.title }}" style="height: 88px; border-radius: 8px;" />

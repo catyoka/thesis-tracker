@@ -5,38 +5,10 @@ from urllib import error, request
 ANILIST_API_URL = "https://graphql.anilist.co"
 
 
-def fetch_media_catalog(media_type: str, query: str, *, per_page: int = 25) -> list[dict]:
-    """
-    Fetch anime/manga list from AniList GraphQL API.
-    Returns simplified dictionaries for local caching.
-    """
-    gql_query = """
-    query ($type: MediaType, $search: String, $sort: [MediaSort], $perPage: Int) {
-      Page(page: 1, perPage: $perPage) {
-        media(type: $type, search: $search, sort: $sort) {
-          id
-          title {
-            romaji
-            english
-            native
-          }
-          description(asHtml: false)
-          coverImage {
-            medium
-          }
-        }
-      }
-    }
-    """
-
+def _anilist_request(gql_query: str, variables: dict) -> dict:
     payload = {
         "query": gql_query,
-        "variables": {
-            "type": media_type,
-            "search": query or None,
-            "sort": ["POPULARITY_DESC"],
-            "perPage": per_page,
-        },
+        "variables": variables,
     }
 
     req = request.Request(
@@ -65,6 +37,42 @@ def fetch_media_catalog(media_type: str, query: str, *, per_page: int = 25) -> l
 
     if parsed.get("errors"):
         raise RuntimeError("AniList API returned an error response.")
+    return parsed
+
+
+def fetch_media_catalog(media_type: str, query: str, *, per_page: int = 25) -> list[dict]:
+    """
+    Fetch anime/manga list from AniList GraphQL API.
+    Returns simplified dictionaries for local caching.
+    """
+    gql_query = """
+    query ($type: MediaType, $search: String, $sort: [MediaSort], $perPage: Int) {
+      Page(page: 1, perPage: $perPage) {
+        media(type: $type, search: $search, sort: $sort) {
+          id
+          title {
+            romaji
+            english
+            native
+          }
+          description(asHtml: false)
+          coverImage {
+            medium
+          }
+        }
+      }
+    }
+    """
+
+    parsed = _anilist_request(
+        gql_query,
+        {
+            "type": media_type,
+            "search": query or None,
+            "sort": ["POPULARITY_DESC"],
+            "perPage": per_page,
+        },
+    )
 
     media_items = (((parsed.get("data") or {}).get("Page") or {}).get("media")) or []
     results: list[dict] = []
@@ -95,3 +103,35 @@ def fetch_media_catalog(media_type: str, query: str, *, per_page: int = 25) -> l
         )
 
     return results
+
+
+def fetch_media_details(anilist_id: int) -> dict:
+    gql_query = """
+    query ($id: Int) {
+      Media(id: $id) {
+        id
+        siteUrl
+        title {
+          romaji
+          english
+          native
+        }
+        description(asHtml: false)
+        coverImage {
+          large
+        }
+        genres
+        averageScore
+        episodes
+        chapters
+        volumes
+        format
+        status
+      }
+    }
+    """
+    parsed = _anilist_request(gql_query, {"id": anilist_id})
+    media = (parsed.get("data") or {}).get("Media") or {}
+    if not media:
+        raise RuntimeError("AniList media details not found.")
+    return media

@@ -9,7 +9,7 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 
-from .anilist import fetch_media_catalog
+from .anilist import fetch_media_catalog, fetch_media_details
 from .models import CatalogItem, LibraryEntry
 
 
@@ -210,6 +210,52 @@ def media_catalog_page(request: HttpRequest, media_type: str) -> HttpResponse:
 
 
 @login_required
+def media_detail_page(request: HttpRequest, media_type: str, item_id: int) -> HttpResponse:
+    item = get_object_or_404(CatalogItem, id=item_id)
+    normalized_type = media_type.upper()
+    if normalized_type not in {CatalogItem.MediaType.ANIME, CatalogItem.MediaType.MANGA}:
+        return redirect("tracker:home")
+    if item.media_type != normalized_type:
+        if item.media_type == CatalogItem.MediaType.MANGA:
+            return redirect("tracker:manga_detail", item_id=item.id)
+        return redirect("tracker:anime_detail", item_id=item.id)
+
+    detail_data: dict | None = None
+    detail_error = ""
+
+    if item.external_id.startswith("anilist:"):
+        raw_id = item.external_id.split(":", 1)[1].strip()
+        if raw_id.isdigit():
+            try:
+                detail_data = fetch_media_details(int(raw_id))
+                detail_title_obj = detail_data.get("title") or {}
+                item.title = (
+                    detail_title_obj.get("english")
+                    or detail_title_obj.get("romaji")
+                    or detail_title_obj.get("native")
+                    or item.title
+                )
+                item.description = (detail_data.get("description") or item.description).strip()
+                item.cover_image_url = ((detail_data.get("coverImage") or {}).get("large") or item.cover_image_url).strip()
+                item.save(update_fields=["title", "description", "cover_image_url"])
+            except RuntimeError:
+                detail_error = "Could not load full details from AniList right now."
+
+    user_entry = LibraryEntry.objects.filter(user=request.user, external_id=item.external_id).first()
+    return render(
+        request,
+        "tracker/media_detail.html",
+        {
+            "item": item,
+            "detail_data": detail_data,
+            "detail_error": detail_error,
+            "user_entry": user_entry,
+            "status_choices": LibraryEntry.Status.choices,
+        },
+    )
+
+
+@login_required
 @require_http_methods(["POST"])
 def add_catalog_item_to_library(request: HttpRequest, item_id: int) -> HttpResponse:
     item = get_object_or_404(CatalogItem, id=item_id)
@@ -240,6 +286,10 @@ def add_catalog_item_to_library(request: HttpRequest, item_id: int) -> HttpRespo
         entry.media_type = item.media_type
         entry.save(update_fields=["status", "catalog_item", "title", "media_type", "updated_at"])
         messages.info(request, f'Updated "{item.title}" in your list.')
+
+    next_path = request.POST.get("next") or ""
+    if next_path.startswith("/"):
+        return redirect(next_path)
 
     if item.media_type == CatalogItem.MediaType.MANGA:
         return redirect("tracker:manga_catalog")

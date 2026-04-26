@@ -57,6 +57,22 @@
         color: var(--text);
         outline: none;
       }
+      select {
+        appearance: none;
+        -webkit-appearance: none;
+        -moz-appearance: none;
+      }
+      select option,
+      select optgroup {
+        background: #2b1530;
+        color: var(--text);
+      }
+      select:focus,
+      input:focus,
+      textarea:focus {
+        border-color: color-mix(in srgb, var(--accent) 65%, var(--border));
+        box-shadow: 0 0 0 2px rgba(255, 123, 207, 0.14);
+      }
       textarea { min-height: 90px; resize: vertical; }
       .field { flex: 1; min-width: 180px; }
       button {
