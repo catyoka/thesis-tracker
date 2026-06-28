@@ -1,0 +1,105 @@
+{% extends "tracker/base.html" %}
+
+{% block title %}Friends - Yulhaverse{% endblock %}
+{% block page_title %}Friends{% endblock %}
+
+{% block content %}
+  <section class="card hero-panel">
+    <div>
+      <div class="eyebrow">Social</div>
+      <h1 style="margin: 6px 0 0;">Friends</h1>
+      <p>Manage friend requests and jump into public profiles.</p>
+    </div>
+    <div class="hero-actions">
+      <a class="button primary" href="{% url 'tracker:users' %}">Find People</a>
+      <a class="button" href="{% url 'tracker:profile' %}">My Profile</a>
+    </div>
+  </section>
+
+  <section class="dashboard-grid">
+    <div class="card">
+      <div class="eyebrow">Friends</div>
+      <h2 style="margin-top: 4px;">Your connections</h2>
+      <div class="user-grid">
+        {% for card in friends %}
+          <article class="user-card">
+            <a class="avatar small" href="{% url 'tracker:public_profile' card.user.username %}">
+              {% if card.profile.display_avatar_url %}
+                <img src="{{ card.profile.display_avatar_url }}" alt="{{ card.user.username }}" />
+              {% else %}
+                {{ card.user.username|first|upper }}
+              {% endif %}
+            </a>
+            <div class="user-card-main">
+              <div class="media-title">
+                <a href="{% url 'tracker:public_profile' card.user.username %}">{{ card.user.username }}</a>
+              </div>
+              <div class="muted" style="font-size: 13px; margin-top: 4px;">
+                {{ card.overview.total_count }} entries - {{ card.overview.favorite_count }} favorites
+              </div>
+              <div class="relation-actions">
+                <a class="button" href="{% url 'tracker:public_profile' card.user.username %}">View</a>
+                <form method="post" action="{% url 'tracker:friend_action' card.user.username %}">
+                  {% csrf_token %}
+                  <input type="hidden" name="action" value="remove" />
+                  <input type="hidden" name="next" value="{{ request.path }}" />
+                  <button type="submit">Remove</button>
+                </form>
+              </div>
+            </div>
+          </article>
+        {% empty %}
+          <p class="muted" style="margin-bottom: 0;">No friends yet. Find people to send requests.</p>
+        {% endfor %}
+      </div>
+    </div>
+
+    <aside class="side-panel">
+      <div class="card">
+        <div class="eyebrow">Incoming</div>
+        <div class="mini-list" style="margin-top: 12px;">
+          {% for friendship in incoming_requests %}
+            <div class="mini-item">
+              <span>{{ friendship.requester.username }}</span>
+              <div class="actions">
+                <form method="post" action="{% url 'tracker:friend_action' friendship.requester.username %}">
+                  {% csrf_token %}
+                  <input type="hidden" name="action" value="accept" />
+                  <input type="hidden" name="next" value="{{ request.path }}" />
+                  <button class="primary" type="submit">Accept</button>
+                </form>
+                <form method="post" action="{% url 'tracker:friend_action' friendship.requester.username %}">
+                  {% csrf_token %}
+                  <input type="hidden" name="action" value="decline" />
+                  <input type="hidden" name="next" value="{{ request.path }}" />
+                  <button type="submit">Decline</button>
+                </form>
+              </div>
+            </div>
+          {% empty %}
+            <p class="muted" style="margin-bottom: 0;">No incoming requests.</p>
+          {% endfor %}
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="eyebrow">Outgoing</div>
+        <div class="mini-list" style="margin-top: 12px;">
+          {% for friendship in outgoing_requests %}
+            <div class="mini-item">
+              <span>{{ friendship.addressee.username }}</span>
+              <form method="post" action="{% url 'tracker:friend_action' friendship.addressee.username %}">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="cancel" />
+                <input type="hidden" name="next" value="{{ request.path }}" />
+                <button type="submit">Cancel</button>
+              </form>
+            </div>
+          {% empty %}
+            <p class="muted" style="margin-bottom: 0;">No outgoing requests.</p>
+          {% endfor %}
+        </div>
+      </div>
+    </aside>
+  </section>
+{% endblock %}

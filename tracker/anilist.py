@@ -18,7 +18,7 @@ def _anilist_request(gql_query: str, variables: dict) -> dict:
             "Content-Type": "application/json",
             "Accept": "application/json",
             # AniList may reject generic urllib clients without an explicit UA.
-            "User-Agent": "betteranilist/0.1 (+https://github.com/catyoka/thesis-tracker)",
+            "User-Agent": "Yulhaverse/0.1 (+https://github.com/catyoka/thesis-tracker)",
             "Origin": "https://anilist.co",
         },
         method="POST",

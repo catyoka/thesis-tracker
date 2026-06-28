@@ -1,4 +1,4 @@
-# betteranilist
+# Yulhaverse
 
 A Django web app for tracking anime and manga lists (inspired by AniList-style workflows).
 

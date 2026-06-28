@@ -1,0 +1,55 @@
+{% extends "tracker/base.html" %}
+
+{% block title %}Edit Profile - Yulhaverse{% endblock %}
+{% block page_title %}Edit Profile{% endblock %}
+
+{% block content %}
+  <section class="card hero-panel">
+    <div>
+      <div class="eyebrow">Profile settings</div>
+      <h1 style="margin: 6px 0 0;">Edit your profile</h1>
+      <p>Add a profile picture URL and short bio that other users can see.</p>
+    </div>
+    <div class="hero-actions">
+      <a class="button" href="{% url 'tracker:profile' %}">Back to Profile</a>
+    </div>
+  </section>
+
+  <section class="card">
+    <form method="post" enctype="multipart/form-data" class="row">
+      {% csrf_token %}
+      <div class="field full">
+        <label>Current profile picture</label>
+        <div class="row" style="align-items: center;">
+          <div class="avatar">
+            {% if profile.display_avatar_url %}
+              <img src="{{ profile.display_avatar_url }}" alt="{{ user.username }}" />
+            {% else %}
+              {{ user.username|first|upper }}
+            {% endif %}
+          </div>
+          <div class="muted">
+            PNG, JPG, JPEG, GIF, and WebP images are center-cropped to a square. Transparent backgrounds stay transparent.
+          </div>
+        </div>
+      </div>
+      <div class="field full">
+        <label for="avatar">Upload profile picture</label>
+        <input id="avatar" type="file" name="avatar" accept="image/png,image/jpeg,image/gif,image/webp" />
+        {% if errors.avatar %}
+          <div class="flash"><div class="err">{{ errors.avatar }}</div></div>
+        {% endif %}
+      </div>
+      <div class="field full">
+        <label for="bio">Bio</label>
+        <textarea id="bio" name="bio" maxlength="500" placeholder="Short profile bio">{{ profile.bio }}</textarea>
+        {% if errors.bio %}
+          <div class="flash"><div class="err">{{ errors.bio }}</div></div>
+        {% endif %}
+      </div>
+      <div class="form-actions">
+        <button class="primary" type="submit">Save Profile</button>
+      </div>
+    </form>
+  </section>
+{% endblock %}

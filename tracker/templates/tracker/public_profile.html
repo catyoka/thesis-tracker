@@ -1,0 +1,146 @@
+{% extends "tracker/base.html" %}
+
+{% block title %}{{ profile_user.username }} - Yulhaverse{% endblock %}
+{% block page_title %}{{ profile_user.username }}{% endblock %}
+
+{% block content %}
+  <section class="card hero-panel">
+    <div class="row" style="align-items: center;">
+      <div class="avatar">
+        {% if profile.display_avatar_url %}
+          <img src="{{ profile.display_avatar_url }}" alt="{{ profile_user.username }}" />
+        {% else %}
+          {{ profile_user.username|first|upper }}
+        {% endif %}
+      </div>
+      <div>
+        <div class="eyebrow">Public profile</div>
+        <h1 style="margin: 6px 0 0;">{{ profile_user.username }}</h1>
+        <p>
+          {% if profile.bio %}{{ profile.bio }}{% else %}Anime and manga tracking profile.{% endif %}
+        </p>
+      </div>
+    </div>
+    <div class="hero-actions">
+      {% if relation == "self" %}
+        <a class="button primary" href="{% url 'tracker:profile_edit' %}">Edit Profile</a>
+      {% elif relation == "none" %}
+        <form method="post" action="{% url 'tracker:friend_action' profile_user.username %}">
+          {% csrf_token %}
+          <input type="hidden" name="action" value="send" />
+          <input type="hidden" name="next" value="{{ request.path }}" />
+          <button class="primary" type="submit">Add Friend</button>
+        </form>
+      {% elif relation == "pending_sent" %}
+        <form method="post" action="{% url 'tracker:friend_action' profile_user.username %}">
+          {% csrf_token %}
+          <input type="hidden" name="action" value="cancel" />
+          <input type="hidden" name="next" value="{{ request.path }}" />
+          <button type="submit">Cancel Request</button>
+        </form>
+      {% elif relation == "pending_received" %}
+        <form method="post" action="{% url 'tracker:friend_action' profile_user.username %}">
+          {% csrf_token %}
+          <input type="hidden" name="action" value="accept" />
+          <input type="hidden" name="next" value="{{ request.path }}" />
+          <button class="primary" type="submit">Accept Request</button>
+        </form>
+      {% elif relation == "friends" %}
+        <span class="pill">Friends</span>
+        <form method="post" action="{% url 'tracker:friend_action' profile_user.username %}">
+          {% csrf_token %}
+          <input type="hidden" name="action" value="remove" />
+          <input type="hidden" name="next" value="{{ request.path }}" />
+          <button type="submit">Remove Friend</button>
+        </form>
+      {% endif %}
+      <a class="button" href="{% url 'tracker:users' %}">People</a>
+    </div>
+  </section>
+
+  <section class="stat-grid" aria-label="Public profile library summary">
+    <div class="card stat-card">
+      <div class="stat-label">Total entries</div>
+      <div class="stat-value">{{ total_count }}</div>
+    </div>
+    <div class="card stat-card">
+      <div class="stat-label">Favorites</div>
+      <div class="stat-value">{{ favorite_count }}</div>
+    </div>
+    <div class="card stat-card">
+      <div class="stat-label">Average rating</div>
+      <div class="stat-value" style="font-size: clamp(30px, 5vw, 44px);">
+        {% if average_rating %}{{ average_rating|floatformat:1 }}{% else %}-{% endif %}
+      </div>
+    </div>
+  </section>
+
+  <section class="dashboard-grid">
+    <div class="card">
+      <div class="eyebrow">Recent activity</div>
+      <h2 style="margin-top: 4px;">Latest updates</h2>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Title</th>
+              <th>Type</th>
+              <th>Status</th>
+              <th>Rating</th>
+              <th>Updated</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for entry in recent_entries %}
+              <tr>
+                <td>
+                  <span class="media-title">{{ entry.title }}</span>
+                  {% if entry.is_favorite %}
+                    <span class="pill" style="margin-left: 6px;">Favorite</span>
+                  {% endif %}
+                </td>
+                <td>{{ entry.get_media_type_display }}</td>
+                <td><span class="pill">{{ entry.status }}</span></td>
+                <td>{% if entry.rating %}{{ entry.rating }}/10{% else %}<span class="muted">-</span>{% endif %}</td>
+                <td>{{ entry.updated_at|date:"Y-m-d H:i" }}</td>
+              </tr>
+            {% empty %}
+              <tr>
+                <td colspan="5" class="muted">No public activity yet.</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <aside class="side-panel">
+      <div class="card">
+        <div class="eyebrow">Status spread</div>
+        <div class="insight-list" style="margin-top: 14px;">
+          {% for item in status_summary %}
+            <div class="insight-row">
+              <span>{{ item.label }}</span>
+              <span class="meter"><span class="meter-fill" style="width: {{ item.percent }}%;"></span></span>
+              <strong>{{ item.count }}</strong>
+            </div>
+          {% endfor %}
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="eyebrow">Favorites</div>
+        <div class="mini-list" style="margin-top: 12px;">
+          {% for entry in favorite_entries %}
+            <div class="mini-item">
+              <span>{{ entry.title }}</span>
+              <strong>{{ entry.get_media_type_display }}</strong>
+            </div>
+          {% empty %}
+            <p class="muted" style="margin-bottom: 0;">No favorites yet.</p>
+          {% endfor %}
+        </div>
+      </div>
+    </aside>
+  </section>
+{% endblock %}

@@ -1,0 +1,188 @@
+{% extends "tracker/base.html" %}
+
+{% block title %}Profile - Yulhaverse{% endblock %}
+{% block page_title %}Profile{% endblock %}
+
+{% block content %}
+  <section class="card hero-panel">
+    <div class="row" style="align-items: center;">
+      <div class="avatar">
+        {% if profile.display_avatar_url %}
+          <img src="{{ profile.display_avatar_url }}" alt="{{ profile_user.username }}" />
+        {% else %}
+          {{ profile_user.username|first|upper }}
+        {% endif %}
+      </div>
+      <div>
+        <div class="eyebrow">Profile</div>
+        <h1 style="margin: 6px 0 0;">{{ profile_user.username }}</h1>
+        <p>
+          {% if profile.bio %}{{ profile.bio }}{% else %}Personal tracking overview for your anime and manga library.{% endif %}
+        </p>
+      </div>
+    </div>
+    <div class="hero-actions">
+      <a class="button primary" href="{% url 'tracker:profile_edit' %}">Edit Profile</a>
+      <a class="button primary" href="{% url 'tracker:library' %}">Manage List</a>
+      <a class="button" href="{% url 'tracker:friends' %}">Friends</a>
+      <a class="button" href="{% url 'tracker:library' %}?favorite=1">Favorites</a>
+    </div>
+  </section>
+
+  <section class="stat-grid" aria-label="Profile library summary">
+    <div class="card stat-card">
+      <div class="stat-label">Total entries</div>
+      <div class="stat-value">{{ total_count }}</div>
+    </div>
+    <div class="card stat-card">
+      <div class="stat-label">Favorites</div>
+      <div class="stat-value">{{ favorite_count }}</div>
+    </div>
+    <div class="card stat-card">
+      <div class="stat-label">Average rating</div>
+      <div class="stat-value" style="font-size: clamp(30px, 5vw, 44px);">
+        {% if average_rating %}{{ average_rating|floatformat:1 }}{% else %}-{% endif %}
+      </div>
+    </div>
+  </section>
+
+  <section class="metric-strip" aria-label="Profile split">
+    <div class="metric-chip">
+      <div class="stat-label">Anime</div>
+      <strong>{{ anime_count }}</strong>
+    </div>
+    <div class="metric-chip">
+      <div class="stat-label">Manga</div>
+      <strong>{{ manga_count }}</strong>
+    </div>
+    <div class="metric-chip">
+      <div class="stat-label">Rated entries</div>
+      <strong>{{ rated_count }}</strong>
+    </div>
+  </section>
+
+  <section class="dashboard-grid">
+    <div class="card">
+      <div class="row" style="justify-content: space-between; margin-bottom: 10px;">
+        <div>
+          <div class="eyebrow">Recent activity</div>
+          <h2 style="margin: 4px 0 0;">Latest updates</h2>
+        </div>
+        <a class="button" href="{% url 'tracker:library' %}">Open List</a>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Title</th>
+              <th>Type</th>
+              <th>Status</th>
+              <th>Rating</th>
+              <th>Updated</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for entry in recent_entries %}
+              <tr>
+                <td>
+                  <span class="media-title">{{ entry.title }}</span>
+                  {% if entry.is_favorite %}
+                    <span class="pill" style="margin-left: 6px;">Favorite</span>
+                  {% endif %}
+                </td>
+                <td>{{ entry.get_media_type_display }}</td>
+                <td><span class="pill">{{ entry.status }}</span></td>
+                <td>{% if entry.rating %}{{ entry.rating }}/10{% else %}<span class="muted">-</span>{% endif %}</td>
+                <td>{{ entry.updated_at|date:"Y-m-d H:i" }}</td>
+              </tr>
+            {% empty %}
+              <tr>
+                <td colspan="5" class="muted">No activity yet.</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <aside class="side-panel">
+      <div class="card">
+        <div class="eyebrow">Status spread</div>
+        <div class="insight-list" style="margin-top: 14px;">
+          {% for item in status_summary %}
+            <div class="insight-row">
+              <span>{{ item.label }}</span>
+              <span class="meter"><span class="meter-fill" style="width: {{ item.percent }}%;"></span></span>
+              <strong>{{ item.count }}</strong>
+            </div>
+          {% endfor %}
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="eyebrow">Favorites</div>
+        <div class="mini-list" style="margin-top: 12px;">
+          {% for entry in favorite_entries %}
+            <a class="mini-item" href="{% url 'tracker:library' %}?favorite=1">
+              <span>{{ entry.title }}</span>
+              <strong>{{ entry.get_media_type_display }}</strong>
+            </a>
+          {% empty %}
+            <p class="muted" style="margin-bottom: 0;">No favorites yet.</p>
+          {% endfor %}
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="eyebrow">Friend requests</div>
+        <div class="mini-list" style="margin-top: 12px;">
+          {% for friendship in incoming_requests %}
+            <div class="mini-item">
+              <span>{{ friendship.requester.username }}</span>
+              <form method="post" action="{% url 'tracker:friend_action' friendship.requester.username %}">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="accept" />
+                <input type="hidden" name="next" value="{{ request.path }}" />
+                <button class="primary" type="submit">Accept</button>
+              </form>
+            </div>
+          {% empty %}
+            <p class="muted" style="margin-bottom: 0;">No pending requests.</p>
+          {% endfor %}
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="eyebrow">Friends</div>
+        <div class="mini-list" style="margin-top: 12px;">
+          {% for friend in friends %}
+            <a class="mini-item" href="{% url 'tracker:public_profile' friend.username %}">
+              <span>{{ friend.username }}</span>
+              <strong>View</strong>
+            </a>
+          {% empty %}
+            <p class="muted" style="margin-bottom: 0;">No friends yet. Browse people to send requests.</p>
+          {% endfor %}
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="eyebrow">Account</div>
+        <div class="mini-list" style="margin-top: 12px;">
+          <div class="mini-item">
+            <span>Username</span>
+            <strong>{{ profile_user.username }}</strong>
+          </div>
+          <div class="mini-item">
+            <span>Friends</span>
+            <strong>{{ friend_count }}</strong>
+          </div>
+          <div class="mini-item">
+            <span>Joined</span>
+            <strong>{{ profile_user.date_joined|date:"Y-m-d" }}</strong>
+          </div>
+        </div>
+      </div>
+    </aside>
+  </section>
+{% endblock %}

@@ -1,16 +1,22 @@
 import json
+from io import BytesIO
+from difflib import SequenceMatcher
 
 from django.contrib import messages
-from django.contrib.auth.forms import UserCreationForm
 from django.contrib.auth.decorators import login_required
+from django.contrib.auth.forms import UserCreationForm
+from django.contrib.auth import get_user_model
+from django.core.files.base import ContentFile
+from django.db.models import Avg, Count, Q
 from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.middleware.csrf import CsrfViewMiddleware
 from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
+from PIL import Image, UnidentifiedImageError
 
 from .anilist import fetch_media_catalog, fetch_media_details
-from .models import CatalogItem, LibraryEntry
+from .models import CatalogItem, Friendship, LibraryEntry, UserProfile
 
 
 def _json_error(message: str, *, status: int, errors: dict | None = None) -> JsonResponse:
@@ -66,28 +72,335 @@ def _serialize_entry(entry: LibraryEntry) -> dict:
         "progress": entry.progress,
         "rating": entry.rating,
         "notes": entry.notes,
+        "is_favorite": entry.is_favorite,
         "created_at": entry.created_at.isoformat(),
         "updated_at": entry.updated_at.isoformat(),
     }
+
+
+def _rank_catalog_items_by_query(items: list[CatalogItem], query: str) -> list[CatalogItem]:
+    normalized_query = query.strip().lower()
+    if not normalized_query:
+        return items
+
+    def score(item: CatalogItem) -> tuple[int, float, str]:
+        title = item.title.lower()
+        if title == normalized_query:
+            bucket = 0
+        elif title.startswith(normalized_query):
+            bucket = 1
+        elif normalized_query in title:
+            bucket = 2
+        else:
+            bucket = 3
+        similarity = SequenceMatcher(None, normalized_query, title).ratio()
+        return (bucket, -similarity, title)
+
+    return sorted(items, key=score)
+
+
+def _library_overview(user) -> dict:
+    user_entries = LibraryEntry.objects.filter(user=user)
+    anime_count = user_entries.filter(media_type=LibraryEntry.MediaType.ANIME).count()
+    manga_count = user_entries.filter(media_type=LibraryEntry.MediaType.MANGA).count()
+    total_count = anime_count + manga_count
+    status_counts = {
+        row["status"]: row["count"]
+        for row in user_entries.values("status").annotate(count=Count("id"))
+    }
+
+    return {
+        "total_count": total_count,
+        "anime_count": anime_count,
+        "manga_count": manga_count,
+        "completed_count": user_entries.filter(status=LibraryEntry.Status.COMPLETED).count(),
+        "active_count": user_entries.filter(status=LibraryEntry.Status.WATCHING).count(),
+        "planned_count": user_entries.filter(status=LibraryEntry.Status.PLANNED).count(),
+        "favorite_count": user_entries.filter(is_favorite=True).count(),
+        "rated_count": user_entries.exclude(rating__isnull=True).count(),
+        "average_rating": user_entries.aggregate(value=Avg("rating"))["value"],
+        "status_summary": [
+            {
+                "value": value,
+                "label": label,
+                "count": status_counts.get(value, 0),
+                "percent": round((status_counts.get(value, 0) / total_count) * 100) if total_count else 0,
+            }
+            for value, label in LibraryEntry.Status.choices
+        ],
+        "recent_entries": user_entries.order_by("-updated_at")[:5],
+        "favorite_entries": user_entries.filter(is_favorite=True).order_by("-updated_at")[:5],
+    }
+
+
+def _ensure_profile(user) -> UserProfile:
+    profile, _created = UserProfile.objects.get_or_create(user=user)
+    return profile
+
+
+def _friendship_between(user_a, user_b) -> Friendship | None:
+    return Friendship.objects.filter(requester=user_a, addressee=user_b).first() or Friendship.objects.filter(
+        requester=user_b,
+        addressee=user_a,
+    ).first()
+
+
+def _friendship_context(current_user, target_user) -> dict:
+    if current_user == target_user:
+        return {"relation": "self", "friendship": None}
+
+    friendship = _friendship_between(current_user, target_user)
+    if friendship is None:
+        return {"relation": "none", "friendship": None}
+    if friendship.status == Friendship.Status.ACCEPTED:
+        return {"relation": "friends", "friendship": friendship}
+    if friendship.requester == current_user:
+        return {"relation": "pending_sent", "friendship": friendship}
+    return {"relation": "pending_received", "friendship": friendship}
+
+
+def _friends_for(user):
+    accepted = Friendship.objects.filter(status=Friendship.Status.ACCEPTED).filter(
+        Q(requester=user) | Q(addressee=user)
+    ).select_related("requester", "addressee")
+    return [
+        friendship.addressee if friendship.requester == user else friendship.requester
+        for friendship in accepted
+    ]
+
+
+def _square_avatar_upload(uploaded_file, username: str) -> ContentFile:
+    if uploaded_file.size > 5 * 1024 * 1024:
+        raise ValueError("Avatar image must be 5 MB or smaller.")
+
+    try:
+        image = Image.open(uploaded_file)
+        image.verify()
+    except (UnidentifiedImageError, OSError) as exc:
+        raise ValueError("Upload a valid image file.") from exc
+
+    uploaded_file.seek(0)
+    image = Image.open(uploaded_file)
+    if image.format not in {"JPEG", "PNG", "GIF", "WEBP"}:
+        raise ValueError("Avatar must be a PNG, JPG, JPEG, GIF, or WebP image.")
+
+    has_transparency = image.mode in {"RGBA", "LA"} or (
+        image.mode == "P" and "transparency" in image.info
+    )
+    image = image.convert("RGBA" if has_transparency else "RGB")
+    width, height = image.size
+    side = min(width, height)
+    left = (width - side) // 2
+    top = (height - side) // 2
+    image = image.crop((left, top, left + side, top + side))
+    image = image.resize((512, 512), Image.Resampling.LANCZOS)
+
+    buffer = BytesIO()
+    safe_username = "".join(ch for ch in username.lower() if ch.isalnum() or ch in {"-", "_"}) or "user"
+    if has_transparency:
+        image.save(buffer, format="PNG", optimize=True)
+        extension = "png"
+    else:
+        image.save(buffer, format="JPEG", quality=88, optimize=True)
+        extension = "jpg"
+    return ContentFile(buffer.getvalue(), name=f"{safe_username}_avatar.{extension}")
+
 
 def home_page(request: HttpRequest) -> HttpResponse:
     if not request.user.is_authenticated:
         return redirect("login")
 
-    user_entries = LibraryEntry.objects.filter(user=request.user)
-    anime_count = user_entries.filter(media_type=LibraryEntry.MediaType.ANIME).count()
-    manga_count = user_entries.filter(media_type=LibraryEntry.MediaType.MANGA).count()
-    total_count = anime_count + manga_count
-    recent_entries = user_entries.order_by("-updated_at")[:5]
+    overview = _library_overview(request.user)
 
     return render(
         request,
         "tracker/home.html",
+        overview,
+    )
+
+
+@login_required
+def profile_page(request: HttpRequest) -> HttpResponse:
+    overview = _library_overview(request.user)
+    profile = _ensure_profile(request.user)
+    friends = _friends_for(request.user)
+    incoming_requests = Friendship.objects.filter(
+        addressee=request.user,
+        status=Friendship.Status.PENDING,
+    ).select_related("requester")[:5]
+    return render(
+        request,
+        "tracker/profile.html",
         {
-            "total_count": total_count,
-            "anime_count": anime_count,
-            "manga_count": manga_count,
-            "recent_entries": recent_entries,
+            **overview,
+            "profile_user": request.user,
+            "profile": profile,
+            "friends": friends[:6],
+            "friend_count": len(friends),
+            "incoming_requests": incoming_requests,
+        },
+    )
+
+
+@login_required
+@require_http_methods(["GET", "POST"])
+def profile_edit_page(request: HttpRequest) -> HttpResponse:
+    profile = _ensure_profile(request.user)
+    errors: dict[str, str] = {}
+
+    if request.method == "POST":
+        bio = (request.POST.get("bio") or "").strip()
+        avatar_file = request.FILES.get("avatar")
+
+        if len(bio) > 500:
+            errors["bio"] = "Bio must be 500 characters or fewer."
+
+        if not errors:
+            profile.bio = bio
+            if avatar_file:
+                try:
+                    avatar_content = _square_avatar_upload(avatar_file, request.user.username)
+                except ValueError as exc:
+                    errors["avatar"] = str(exc)
+                else:
+                    if profile.avatar:
+                        profile.avatar.delete(save=False)
+                    profile.avatar.save(avatar_content.name, avatar_content, save=False)
+                    profile.avatar_url = ""
+            if not errors:
+                profile.save(update_fields=["avatar", "avatar_url", "bio", "updated_at"])
+                messages.success(request, "Profile updated.")
+                return redirect("tracker:profile")
+
+    return render(
+        request,
+        "tracker/profile_edit.html",
+        {
+            "profile": profile,
+            "errors": errors,
+        },
+    )
+
+
+@login_required
+def user_directory_page(request: HttpRequest) -> HttpResponse:
+    User = get_user_model()
+    query = (request.GET.get("q") or "").strip()
+    users_qs = User.objects.exclude(id=request.user.id).order_by("username")
+    if query:
+        users_qs = users_qs.filter(username__icontains=query)
+
+    user_cards = []
+    for listed_user in users_qs[:60]:
+        user_cards.append(
+            {
+                "user": listed_user,
+                "profile": _ensure_profile(listed_user),
+                "overview": _library_overview(listed_user),
+                **_friendship_context(request.user, listed_user),
+            }
+        )
+
+    return render(
+        request,
+        "tracker/users.html",
+        {
+            "query": query,
+            "user_cards": user_cards,
+        },
+    )
+
+
+@login_required
+def public_profile_page(request: HttpRequest, username: str) -> HttpResponse:
+    User = get_user_model()
+    profile_user = get_object_or_404(User, username=username)
+    profile = _ensure_profile(profile_user)
+    overview = _library_overview(profile_user)
+    friendship = _friendship_context(request.user, profile_user)
+
+    return render(
+        request,
+        "tracker/public_profile.html",
+        {
+            **overview,
+            "profile_user": profile_user,
+            "profile": profile,
+            **friendship,
+        },
+    )
+
+
+@login_required
+@require_http_methods(["POST"])
+def friend_action(request: HttpRequest, username: str) -> HttpResponse:
+    User = get_user_model()
+    target_user = get_object_or_404(User, username=username)
+    action = request.POST.get("action") or ""
+
+    if target_user == request.user:
+        messages.error(request, "You cannot add yourself.")
+        return redirect("tracker:profile")
+
+    friendship = _friendship_between(request.user, target_user)
+
+    if action == "send":
+        if friendship is None:
+            Friendship.objects.create(requester=request.user, addressee=target_user)
+            messages.success(request, f"Friend request sent to {target_user.username}.")
+        elif friendship.status == Friendship.Status.PENDING and friendship.addressee == request.user:
+            friendship.status = Friendship.Status.ACCEPTED
+            friendship.save(update_fields=["status", "updated_at"])
+            messages.success(request, f"You are now friends with {target_user.username}.")
+        elif friendship.status == Friendship.Status.ACCEPTED:
+            messages.info(request, f"You are already friends with {target_user.username}.")
+        else:
+            messages.info(request, "Friend request already sent.")
+    elif action == "accept" and friendship and friendship.addressee == request.user:
+        friendship.status = Friendship.Status.ACCEPTED
+        friendship.save(update_fields=["status", "updated_at"])
+        messages.success(request, f"You are now friends with {target_user.username}.")
+    elif action in {"decline", "cancel"} and friendship and friendship.status == Friendship.Status.PENDING:
+        friendship.delete()
+        messages.info(request, "Friend request removed.")
+    elif action == "remove" and friendship:
+        friendship.delete()
+        messages.info(request, f"Removed {target_user.username} from friends.")
+    else:
+        messages.error(request, "Friend action could not be completed.")
+
+    next_path = request.POST.get("next") or ""
+    if next_path.startswith("/"):
+        return redirect(next_path)
+    return redirect("tracker:public_profile", username=target_user.username)
+
+
+@login_required
+def friends_page(request: HttpRequest) -> HttpResponse:
+    friends = [
+        {
+            "user": friend,
+            "profile": _ensure_profile(friend),
+            "overview": _library_overview(friend),
+        }
+        for friend in _friends_for(request.user)
+    ]
+    incoming = Friendship.objects.filter(
+        addressee=request.user,
+        status=Friendship.Status.PENDING,
+    ).select_related("requester")
+    outgoing = Friendship.objects.filter(
+        requester=request.user,
+        status=Friendship.Status.PENDING,
+    ).select_related("addressee")
+
+    return render(
+        request,
+        "tracker/friends.html",
+        {
+            "friends": friends,
+            "incoming_requests": incoming,
+            "outgoing_requests": outgoing,
         },
     )
 
@@ -109,14 +422,30 @@ def signup_page(request: HttpRequest) -> HttpResponse:
 
 @login_required
 def library_page(request: HttpRequest) -> HttpResponse:
-    qs = LibraryEntry.objects.filter(user=request.user)
+    base_qs = LibraryEntry.objects.filter(user=request.user)
+    qs = base_qs
 
     status = request.GET.get("status") or ""
     media_type = request.GET.get("media_type") or ""
+    favorite_filter = request.GET.get("favorite") == "1"
     if status:
         qs = qs.filter(status=status)
     if media_type:
         qs = qs.filter(media_type=media_type)
+    if favorite_filter:
+        qs = qs.filter(is_favorite=True)
+
+    status_counts = {
+        row["status"]: row["count"]
+        for row in base_qs.values("status").annotate(count=Count("id"))
+    }
+    status_tabs = [
+        {"value": "", "label": "All", "count": base_qs.count()},
+        *[
+            {"value": value, "label": label, "count": status_counts.get(value, 0)}
+            for value, label in LibraryEntry.Status.choices
+        ],
+    ]
 
     return render(
         request,
@@ -125,6 +454,9 @@ def library_page(request: HttpRequest) -> HttpResponse:
             "entries": qs.order_by("-updated_at"),
             "status_filter": status,
             "media_type_filter": media_type,
+            "favorite_filter": favorite_filter,
+            "favorite_count": base_qs.filter(is_favorite=True).count(),
+            "status_tabs": status_tabs,
             "status_choices": LibraryEntry.Status.choices,
             "media_type_choices": LibraryEntry.MediaType.choices,
         },
@@ -176,7 +508,11 @@ def media_catalog_page(request: HttpRequest, media_type: str) -> HttpResponse:
         position = {external_id: idx for idx, external_id in enumerate(preferred_external_ids)}
         catalog_items.sort(key=lambda item: position.get(item.external_id, 10**9))
     else:
-        catalog_items = list(catalog_qs.order_by("title")[:50])
+        catalog_items = list(catalog_qs.order_by("title")[:100])
+        if query:
+            catalog_items = _rank_catalog_items_by_query(catalog_items, query)[:50]
+        else:
+            catalog_items = catalog_items[:50]
 
     user_entries = LibraryEntry.objects.filter(
         user=request.user,
@@ -386,7 +722,7 @@ def api_library_detail(request: HttpRequest, entry_id: int) -> HttpResponse:
         return err
     assert data is not None
 
-    allowed_fields = {"status", "progress", "rating", "notes"}
+    allowed_fields = {"status", "progress", "rating", "notes", "is_favorite"}
     unknown_fields = sorted(set(data.keys()) - allowed_fields)
     if unknown_fields:
         return _json_error(
@@ -433,8 +769,15 @@ def api_library_detail(request: HttpRequest, entry_id: int) -> HttpResponse:
         else:
             entry.notes = notes
 
+    if "is_favorite" in data:
+        is_favorite = data.get("is_favorite")
+        if not isinstance(is_favorite, bool):
+            field_errors["is_favorite"] = "Must be true or false."
+        else:
+            entry.is_favorite = is_favorite
+
     if field_errors:
         return _json_error("Validation error.", status=400, errors=field_errors)
 
-    entry.save(update_fields=["status", "progress", "rating", "notes", "updated_at"])
+    entry.save(update_fields=["status", "progress", "rating", "notes", "is_favorite", "updated_at"])
     return JsonResponse({"ok": True, "result": _serialize_entry(entry)})

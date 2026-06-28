@@ -24,6 +24,62 @@ class CatalogItem(models.Model):
         return f"{self.title} ({self.media_type})"
 
 
+class UserProfile(models.Model):
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="tracker_profile",
+    )
+    avatar = models.ImageField(upload_to="avatars/", blank=True)
+    avatar_url = models.URLField(blank=True)
+    bio = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    @property
+    def display_avatar_url(self) -> str:
+        if self.avatar:
+            return self.avatar.url
+        return self.avatar_url
+
+    def __str__(self) -> str:
+        return f"{self.user} profile"
+
+
+class Friendship(models.Model):
+    class Status(models.TextChoices):
+        PENDING = "PENDING", "Pending"
+        ACCEPTED = "ACCEPTED", "Accepted"
+
+    requester = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="sent_friendships",
+    )
+    addressee = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="received_friendships",
+    )
+    status = models.CharField(max_length=16, choices=Status.choices, default=Status.PENDING)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["requester", "addressee"], name="uniq_friendship_requester_addressee"
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["requester", "status"], name="idx_friend_requester_status"),
+            models.Index(fields=["addressee", "status"], name="idx_friend_addressee_status"),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.requester} -> {self.addressee} ({self.status})"
+
+
 class LibraryEntry(models.Model):
     class MediaType(models.TextChoices):
         ANIME = "ANIME", "Anime"
@@ -55,6 +111,7 @@ class LibraryEntry(models.Model):
     progress = models.PositiveIntegerField(default=0)
     rating = models.PositiveSmallIntegerField(null=True, blank=True)
     notes = models.TextField(blank=True)
+    is_favorite = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -66,6 +123,7 @@ class LibraryEntry(models.Model):
         ]
         indexes = [
             models.Index(fields=["user", "status"], name="idx_library_user_status"),
+            models.Index(fields=["user", "is_favorite"], name="idx_library_user_favorite"),
         ]
         ordering = ["-updated_at"]
 

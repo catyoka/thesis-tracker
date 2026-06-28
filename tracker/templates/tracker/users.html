@@ -1,0 +1,81 @@
+{% extends "tracker/base.html" %}
+
+{% block title %}People - Yulhaverse{% endblock %}
+{% block page_title %}People{% endblock %}
+
+{% block content %}
+  <section class="card hero-panel">
+    <div>
+      <div class="eyebrow">People</div>
+      <h1 style="margin: 6px 0 0;">Find other users</h1>
+      <p>Browse public profiles and send friend requests to other users.</p>
+    </div>
+    <form method="get" class="row" style="align-items: end;">
+      <div class="field" style="min-width: 260px;">
+        <label for="q">Search username</label>
+        <input id="q" name="q" value="{{ query }}" placeholder="Search users" />
+      </div>
+      <div class="form-actions">
+        <button class="primary" type="submit">Search</button>
+      </div>
+    </form>
+  </section>
+
+  <section class="user-grid">
+    {% for card in user_cards %}
+      <article class="card user-card">
+        <a class="avatar small" href="{% url 'tracker:public_profile' card.user.username %}">
+          {% if card.profile.display_avatar_url %}
+            <img src="{{ card.profile.display_avatar_url }}" alt="{{ card.user.username }}" />
+          {% else %}
+            {{ card.user.username|first|upper }}
+          {% endif %}
+        </a>
+        <div class="user-card-main">
+          <div class="media-title">
+            <a href="{% url 'tracker:public_profile' card.user.username %}">{{ card.user.username }}</a>
+          </div>
+          <div class="muted" style="font-size: 13px; margin-top: 4px;">
+            {{ card.overview.total_count }} entries - {{ card.overview.favorite_count }} favorites
+          </div>
+          {% if card.profile.bio %}
+            <div class="description">{{ card.profile.bio|truncatechars:120 }}</div>
+          {% endif %}
+
+          <div class="relation-actions">
+            <a class="button" href="{% url 'tracker:public_profile' card.user.username %}">View</a>
+            {% if card.relation == "none" %}
+              <form method="post" action="{% url 'tracker:friend_action' card.user.username %}">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="send" />
+                <input type="hidden" name="next" value="{{ request.get_full_path }}" />
+                <button class="primary" type="submit">Add Friend</button>
+              </form>
+            {% elif card.relation == "pending_sent" %}
+              <form method="post" action="{% url 'tracker:friend_action' card.user.username %}">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="cancel" />
+                <input type="hidden" name="next" value="{{ request.get_full_path }}" />
+                <button type="submit">Request Sent</button>
+              </form>
+            {% elif card.relation == "pending_received" %}
+              <form method="post" action="{% url 'tracker:friend_action' card.user.username %}">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="accept" />
+                <input type="hidden" name="next" value="{{ request.get_full_path }}" />
+                <button class="primary" type="submit">Accept</button>
+              </form>
+            {% elif card.relation == "friends" %}
+              <span class="pill">Friends</span>
+            {% endif %}
+          </div>
+        </div>
+      </article>
+    {% empty %}
+      <div class="card">
+        <h2>No users found</h2>
+        <p class="muted" style="margin-bottom: 0;">Try another username search.</p>
+      </div>
+    {% endfor %}
+  </section>
+{% endblock %}

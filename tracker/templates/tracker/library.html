@@ -1,25 +1,22 @@
 {% extends "tracker/base.html" %}
 
-{% block title %}Library · betteranilist{% endblock %}
+{% block title %}Library - Yulhaverse{% endblock %}
 {% block page_title %}Your Library{% endblock %}
 
 {% block content %}
-  <div class="card" style="margin-bottom: 16px;">
-    <h2 style="margin-bottom: 6px;">Filters</h2>
-    <div class="muted" style="margin-bottom: 12px; font-size: 13px;">
-      Filters are server-side (page reload). Actions below use the JSON API.
+  <section class="card hero-panel">
+    <div>
+      <div class="eyebrow">Library</div>
+      <h1 style="margin: 6px 0 0;">Keep the list current</h1>
+      <p>Use status tabs, ratings, notes, and quick progress controls from one compact workspace.</p>
     </div>
-
-    <form method="get" class="row">
-      <div class="field">
-        <label for="status">Status</label>
-        <select id="status" name="status">
-          <option value="" {% if not status_filter %}selected{% endif %}>All</option>
-          {% for value,label in status_choices %}
-            <option value="{{ value }}" {% if status_filter == value %}selected{% endif %}>{{ label }}</option>
-          {% endfor %}
-        </select>
-      </div>
+    <form method="get" class="row" style="align-items: end;">
+      {% if status_filter %}
+        <input type="hidden" name="status" value="{{ status_filter }}" />
+      {% endif %}
+      {% if favorite_filter %}
+        <input type="hidden" name="favorite" value="1" />
+      {% endif %}
       <div class="field">
         <label for="media_type">Media type</label>
         <select id="media_type" name="media_type">
@@ -29,17 +26,36 @@
           {% endfor %}
         </select>
       </div>
-      <div class="field" style="min-width: 140px;">
+      <div class="form-actions">
         <button class="primary" type="submit">Apply</button>
       </div>
     </form>
-  </div>
+  </section>
 
-  <div class="card" style="margin-bottom: 16px;">
-    <h2 style="margin-bottom: 6px;">Add entry</h2>
-    <div class="muted" style="margin-bottom: 12px; font-size: 13px;">
-      Minimal manual add for now. Later you can replace this with external catalog search.
-    </div>
+  <nav class="tabs" aria-label="Library status filters">
+    {% for tab in status_tabs %}
+      <a
+        class="tab {% if status_filter == tab.value %}active{% endif %}"
+        href="{% url 'tracker:library' %}?{% if tab.value %}status={{ tab.value }}{% endif %}{% if media_type_filter %}{% if tab.value %}&{% endif %}media_type={{ media_type_filter }}{% endif %}{% if favorite_filter %}{% if tab.value or media_type_filter %}&{% endif %}favorite=1{% endif %}"
+      >
+        <span>{{ tab.label }}</span>
+        <span class="tab-count">{{ tab.count }}</span>
+      </a>
+    {% endfor %}
+    <a
+      class="tab {% if favorite_filter %}active{% endif %}"
+      href="{% url 'tracker:library' %}?{% if status_filter %}status={{ status_filter }}{% if media_type_filter %}&{% endif %}{% endif %}{% if media_type_filter %}media_type={{ media_type_filter }}{% endif %}{% if not favorite_filter %}{% if status_filter or media_type_filter %}&{% endif %}favorite=1{% endif %}"
+    >
+      <span>Favorites</span>
+      <span class="tab-count">{{ favorite_count }}</span>
+    </a>
+  </nav>
+
+  <section class="card section-card">
+    <h2>Add entry</h2>
+    <p class="muted" style="margin-bottom: 14px;">
+      Add a manual entry when you already know the external ID.
+    </p>
 
     <form id="add-form" class="row">
       <div class="field">
@@ -66,20 +82,24 @@
           {% endfor %}
         </select>
       </div>
-      <div class="field" style="min-width: 160px;">
+      <div class="form-actions">
         <button class="primary" type="submit">Create</button>
       </div>
     </form>
 
     <div id="add-flash" class="flash"></div>
-  </div>
+  </section>
 
-  <div class="card">
-    <h2 style="margin-bottom: 6px;">Entries ({{ entries|length }})</h2>
-    <div class="muted" style="margin-bottom: 12px; font-size: 13px;">
-      Sorted by <code>updated_at</code> (desc). Quick actions update via API then reload.
+  <section class="card">
+    <div class="row" style="justify-content: space-between; margin-bottom: 10px;">
+      <div>
+        <div class="eyebrow">List</div>
+        <h2 style="margin: 4px 0 0;">Entries ({{ entries|length }})</h2>
+      </div>
+      {% if favorite_filter %}
+        <span class="pill">Favorites only</span>
+      {% endif %}
     </div>
-
     <div class="table-wrap">
       <table>
         <thead>
@@ -97,23 +117,33 @@
           {% for e in entries %}
             <tr data-entry-id="{{ e.id }}">
               <td>
-                <div style="font-weight: 650;">{{ e.title }}</div>
-                <div class="muted" style="font-size: 12px;">external_id: <code>{{ e.external_id }}</code></div>
+                <div class="media-title">{{ e.title }}</div>
+                <div class="faint" style="margin-top: 5px;">external_id: <code>{{ e.external_id }}</code></div>
+                {% if e.notes %}
+                  <div class="description">{{ e.notes|truncatechars:110 }}</div>
+                {% endif %}
               </td>
               <td>{{ e.get_media_type_display }}</td>
-              <td><code>{{ e.status }}</code></td>
+              <td><span class="pill">{{ e.status }}</span></td>
               <td style="white-space: nowrap;">
                 <span class="js-progress">{{ e.progress }}</span>
                 <span class="actions" style="display: inline-flex; margin-left: 8px;">
-                  <button type="button" class="js-progress-dec" title="-1">-</button>
-                  <button type="button" class="js-progress-inc" title="+1">+</button>
+                  <button type="button" class="compact js-progress-dec" title="Decrease progress">-</button>
+                  <button type="button" class="compact js-progress-inc" title="Increase progress">+</button>
                 </span>
               </td>
-              <td>{% if e.rating %}{{ e.rating }}{% else %}<span class="muted">—</span>{% endif %}</td>
+              <td>{% if e.rating %}<span class="pill">{{ e.rating }}/10</span>{% else %}<span class="muted">-</span>{% endif %}</td>
               <td style="white-space: nowrap;">{{ e.updated_at|date:"Y-m-d H:i" }}</td>
               <td>
                 <div class="actions">
-                  <button type="button" class="js-mark-completed">Mark completed</button>
+                  <button
+                    type="button"
+                    class="favorite js-favorite {% if e.is_favorite %}is-active{% endif %}"
+                    data-is-favorite="{% if e.is_favorite %}true{% else %}false{% endif %}"
+                  >
+                    {% if e.is_favorite %}Favorited{% else %}Favorite{% endif %}
+                  </button>
+                  <button type="button" class="js-mark-completed">Complete</button>
                   <button type="button" class="js-edit">Edit</button>
                   <button type="button" class="danger js-delete">Delete</button>
                 </div>
@@ -124,9 +154,9 @@
                 <div class="row" style="align-items: end;">
                   <div class="field">
                     <label>Rating (1-10 or empty)</label>
-                    <input class="js-edit-rating" type="number" min="1" max="10" placeholder="(empty clears)" />
+                    <input class="js-edit-rating" type="number" min="1" max="10" placeholder="Empty clears" />
                   </div>
-                  <div class="field" style="min-width: 260px;">
+                  <div class="field" style="min-width: 220px;">
                     <label>Status</label>
                     <select class="js-edit-status">
                       {% for value,label in status_choices %}
@@ -134,35 +164,35 @@
                       {% endfor %}
                     </select>
                   </div>
-                  <div class="field" style="min-width: 360px;">
+                  <div class="field" style="min-width: 260px;">
                     <label>Notes</label>
-                    <input class="js-edit-notes" type="text" placeholder="Short note…" />
+                    <input class="js-edit-notes" type="text" placeholder="Short note" />
                   </div>
-                  <div class="field" style="min-width: 220px;">
+                  <div class="form-actions">
                     <div class="actions">
                       <button type="button" class="primary js-save">Save</button>
                       <button type="button" class="js-cancel">Cancel</button>
                     </div>
                   </div>
                 </div>
-                <div class="flash js-edit-flash" style="margin-top: 10px;"></div>
+                <div class="flash js-edit-flash"></div>
               </td>
             </tr>
           {% empty %}
             <tr>
-              <td colspan="7" class="muted">No entries yet. Add one above.</td>
+              <td colspan="7" class="muted">No entries match these filters. Add one above or browse the catalog.</td>
             </tr>
           {% endfor %}
         </tbody>
       </table>
     </div>
-  </div>
+  </section>
 
   <script>
     function getCookie(name) {
       const value = `; ${document.cookie}`;
       const parts = value.split(`; ${name}=`);
-      if (parts.length === 2) return parts.pop().split(';').shift();
+      if (parts.length === 2) return parts.pop().split(";").shift();
       return null;
     }
 
@@ -215,12 +245,26 @@
 
       try {
         await apiFetch("{% url 'tracker:api_library_list_create' %}", { method: "POST", body: payload });
-        setFlash(flash, "ok", "Created. Reloading…");
+        setFlash(flash, "ok", "Created. Reloading...");
         window.location.reload();
       } catch (e) {
         const extra = e.data && e.data.errors ? JSON.stringify(e.data.errors) : null;
         setFlash(flash, "err", e.message, extra);
       }
+    });
+
+    document.querySelectorAll(".js-favorite").forEach((btn) => {
+      btn.addEventListener("click", async (ev) => {
+        const row = ev.target.closest("tr[data-entry-id]");
+        const id = row.getAttribute("data-entry-id");
+        const isFavorite = ev.target.getAttribute("data-is-favorite") === "true";
+        try {
+          await apiFetch(`/api/library/${id}/`, { method: "PATCH", body: { is_favorite: !isFavorite } });
+          window.location.reload();
+        } catch (e) {
+          alert(e.message);
+        }
+      });
     });
 
     document.querySelectorAll(".js-mark-completed").forEach((btn) => {
@@ -321,6 +365,7 @@
         try { await adjustProgress(id, +1); } catch (e) { alert(e.message); }
       });
     });
+
     document.querySelectorAll(".js-progress-dec").forEach((btn) => {
       btn.addEventListener("click", async (ev) => {
         const row = ev.target.closest("tr[data-entry-id]");
@@ -330,4 +375,3 @@
     });
   </script>
 {% endblock %}
-

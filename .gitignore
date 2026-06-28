@@ -17,6 +17,7 @@ ENV/
 # Django / local
 *.log
 db.sqlite3
+media/
 local_settings.py
 .env
 .env.*

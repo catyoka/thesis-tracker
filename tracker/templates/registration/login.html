@@ -1,15 +1,16 @@
 {% extends "tracker/base.html" %}
 
-{% block title %}Login · betteranilist{% endblock %}
+{% block title %}Login - Yulhaverse{% endblock %}
 {% block page_title %}Login{% endblock %}
 
 {% block content %}
-  <div class="card" style="max-width: 520px;">
-    <h2 style="margin-bottom: 6px;">Sign in</h2>
-    <div class="muted" style="margin-bottom: 12px; font-size: 13px;">
-      Use your account to track anime and manga. No account yet?
-      <a href="{% url 'tracker:signup' %}">Create one</a>.
-    </div>
+  <section class="card auth-card">
+    <div class="eyebrow">Welcome back</div>
+    <h1 style="margin: 6px 0 8px;">Sign in</h1>
+    <p class="muted" style="margin-bottom: 18px;">
+      Use your account to keep tracking anime and manga. New here?
+      <a href="{% url 'tracker:signup' %}">Create an account</a>.
+    </p>
 
     {% if form.errors %}
       <div class="flash">
@@ -20,15 +21,15 @@
     <form method="post">
       {% csrf_token %}
       <div class="row">
-        <div class="field" style="min-width: 100%;">
+        <div class="field full">
           <label for="id_username">Username</label>
           <input type="text" name="username" autocomplete="username" required id="id_username" />
         </div>
-        <div class="field" style="min-width: 100%;">
+        <div class="field full">
           <label for="id_password">Password</label>
           <input type="password" name="password" autocomplete="current-password" required id="id_password" />
         </div>
-        <div class="field" style="min-width: 160px;">
+        <div class="form-actions">
           <button class="primary" type="submit">Login</button>
         </div>
       </div>
@@ -36,6 +37,5 @@
         <input type="hidden" name="next" value="{{ next }}" />
       {% endif %}
     </form>
-  </div>
+  </section>
 {% endblock %}
-

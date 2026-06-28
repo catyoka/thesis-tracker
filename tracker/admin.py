@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import CatalogItem, LibraryEntry
+from .models import CatalogItem, Friendship, LibraryEntry, UserProfile
 
 
 @admin.register(LibraryEntry)
@@ -26,3 +26,18 @@ class CatalogItemAdmin(admin.ModelAdmin):
     list_filter = ("media_type",)
     search_fields = ("title", "external_id")
     ordering = ("title",)
+
+
+@admin.register(UserProfile)
+class UserProfileAdmin(admin.ModelAdmin):
+    list_display = ("id", "user", "updated_at")
+    search_fields = ("user__username", "user__email", "bio")
+    ordering = ("user__username",)
+
+
+@admin.register(Friendship)
+class FriendshipAdmin(admin.ModelAdmin):
+    list_display = ("id", "requester", "addressee", "status", "updated_at")
+    list_filter = ("status", "updated_at")
+    search_fields = ("requester__username", "addressee__username")
+    ordering = ("-updated_at",)

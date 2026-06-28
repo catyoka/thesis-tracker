@@ -1,37 +1,44 @@
 {% extends "tracker/base.html" %}
 
-{% block title %}{{ item.title }} · betteranilist{% endblock %}
+{% block title %}{{ item.title }} - Yulhaverse{% endblock %}
 {% block page_title %}{{ item.title }}{% endblock %}
 
 {% block content %}
-  <div class="card" style="margin-bottom: 16px;">
-    <div class="actions" style="margin-bottom: 10px;">
-      {% if item.media_type == "MANGA" %}
-        <a href="{% url 'tracker:manga_catalog' %}">&larr; Back to Manga</a>
-      {% else %}
-        <a href="{% url 'tracker:anime_catalog' %}">&larr; Back to Anime</a>
-      {% endif %}
-    </div>
-
-    {% if detail_error %}
-      <div class="flash"><div class="err">{{ detail_error }}</div></div>
-    {% endif %}
-
-    <div class="row" style="align-items: flex-start;">
-      <div style="min-width: 180px;">
+  <section class="card detail-hero">
+    <div class="detail-backdrop"></div>
+    <div class="detail-grid">
+      <div>
         {% if item.cover_image_url %}
-          <img src="{{ item.cover_image_url }}" alt="{{ item.title }}" style="width: 180px; border-radius: 10px;" />
+          <img class="cover large" src="{{ item.cover_image_url }}" alt="{{ item.title }}" />
         {% endif %}
       </div>
-      <div class="field">
-        <h2 style="margin-bottom: 8px;">Details</h2>
-        <div class="muted" style="font-size: 13px; margin-bottom: 8px;">
-          <code>{{ item.external_id }}</code> · {{ item.get_media_type_display }}
+      <div class="detail-copy">
+        <div class="actions" style="margin-bottom: 14px;">
+          {% if item.media_type == "MANGA" %}
+            <a class="button" href="{% url 'tracker:manga_catalog' %}">Back to Manga</a>
+          {% else %}
+            <a class="button" href="{% url 'tracker:anime_catalog' %}">Back to Anime</a>
+          {% endif %}
+          {% if detail_data.siteUrl %}
+            <a class="button primary" href="{{ detail_data.siteUrl }}" target="_blank" rel="noopener">Open on AniList</a>
+          {% endif %}
         </div>
-        {% if detail_data.siteUrl %}
-          <div style="margin-bottom: 8px;"><a href="{{ detail_data.siteUrl }}" target="_blank" rel="noopener">Open on AniList</a></div>
+
+        {% if detail_error %}
+          <div class="flash"><div class="err">{{ detail_error }}</div></div>
         {% endif %}
-        <div class="muted" style="font-size: 14px; line-height: 1.5;">
+
+        <div class="eyebrow">{{ item.get_media_type_display }}</div>
+        <h1 style="margin: 6px 0 8px;">{{ item.title }}</h1>
+        <div class="actions" style="margin-bottom: 14px;">
+          <code>{{ item.external_id }}</code>
+          {% if user_entry %}
+            <span class="pill">{{ user_entry.status }}</span>
+          {% else %}
+            <span class="pill neutral">Not in list</span>
+          {% endif %}
+        </div>
+        <div class="description" style="font-size: 14px;">
           {% if item.description %}
             {{ item.description|striptags }}
           {% else %}
@@ -40,43 +47,43 @@
         </div>
       </div>
     </div>
-  </div>
+  </section>
 
-  <div class="card" style="margin-bottom: 16px;">
-    <h2 style="margin-bottom: 8px;">Metadata</h2>
-    <div class="row">
+  <section class="card section-card">
+    <h2>Metadata</h2>
+    <div class="metadata-grid">
       {% if detail_data.averageScore %}
-        <div class="field"><label>Average score</label><div>{{ detail_data.averageScore }}</div></div>
+        <div class="metadata-item"><label>Average score</label><div>{{ detail_data.averageScore }}</div></div>
       {% endif %}
       {% if detail_data.format %}
-        <div class="field"><label>Format</label><div>{{ detail_data.format }}</div></div>
+        <div class="metadata-item"><label>Format</label><div>{{ detail_data.format }}</div></div>
       {% endif %}
       {% if detail_data.status %}
-        <div class="field"><label>Release status</label><div>{{ detail_data.status }}</div></div>
+        <div class="metadata-item"><label>Release status</label><div>{{ detail_data.status }}</div></div>
       {% endif %}
       {% if detail_data.episodes %}
-        <div class="field"><label>Episodes</label><div>{{ detail_data.episodes }}</div></div>
+        <div class="metadata-item"><label>Episodes</label><div>{{ detail_data.episodes }}</div></div>
       {% endif %}
       {% if detail_data.chapters %}
-        <div class="field"><label>Chapters</label><div>{{ detail_data.chapters }}</div></div>
+        <div class="metadata-item"><label>Chapters</label><div>{{ detail_data.chapters }}</div></div>
       {% endif %}
       {% if detail_data.volumes %}
-        <div class="field"><label>Volumes</label><div>{{ detail_data.volumes }}</div></div>
+        <div class="metadata-item"><label>Volumes</label><div>{{ detail_data.volumes }}</div></div>
       {% endif %}
     </div>
     {% if detail_data.genres %}
-      <div class="muted" style="margin-top: 12px;">Genres: {{ detail_data.genres|join:", " }}</div>
+      <div class="muted" style="margin-top: 14px;">Genres: {{ detail_data.genres|join:", " }}</div>
     {% endif %}
-  </div>
+  </section>
 
-  <div class="card">
-    <h2 style="margin-bottom: 8px;">Add / Update in your list</h2>
+  <section class="card">
+    <h2>{% if user_entry %}Update your list{% else %}Add to your list{% endif %}</h2>
     {% if user_entry %}
-      <div class="muted" style="margin-bottom: 10px;">
-        Current status: <code>{{ user_entry.status }}</code> · Progress: {{ user_entry.progress }}
+      <div class="muted" style="margin-bottom: 12px;">
+        Current progress: {{ user_entry.progress }}
       </div>
     {% else %}
-      <div class="muted" style="margin-bottom: 10px;">This title is not in your list yet.</div>
+      <div class="muted" style="margin-bottom: 12px;">This title is not in your list yet.</div>
     {% endif %}
     <form method="post" action="{% url 'tracker:catalog_add' item.id %}" class="row">
       {% csrf_token %}
@@ -89,9 +96,9 @@
           {% endfor %}
         </select>
       </div>
-      <div class="field" style="min-width: 200px;">
-        <button type="submit" class="primary">{% if user_entry %}Update my list{% else %}Save to my list{% endif %}</button>
+      <div class="form-actions">
+        <button type="submit" class="primary">{% if user_entry %}Update{% else %}Save{% endif %}</button>
       </div>
     </form>
-  </div>
+  </section>
 {% endblock %}
