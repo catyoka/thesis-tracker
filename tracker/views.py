@@ -34,10 +34,8 @@ def _require_api_auth(request: HttpRequest) -> HttpResponse | None:
 
 def _require_csrf_for_api(request: HttpRequest) -> HttpResponse | None:
     """
-    We want `/api/*` to return JSON 401 for unauthenticated users.
-    Django's CSRF middleware runs before auth and would otherwise return 403 HTML/CSRF
-    for unauthenticated unsafe methods. To avoid that, API views are `csrf_exempt`
-    and we enforce CSRF manually for authenticated unsafe requests.
+    API endpoints return JSON errors for unauthenticated requests.
+    CSRF is enforced manually for authenticated unsafe requests.
     """
     if request.method in {"GET", "HEAD", "OPTIONS", "TRACE"}:
         return None
