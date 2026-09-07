@@ -49,6 +49,44 @@
     </div>
   </section>
 
+  <section class="card section-card">
+    <div class="row" style="justify-content: space-between; margin-bottom: 14px;">
+      <div>
+        <div class="eyebrow">Recommended next</div>
+        <h2 style="margin: 4px 0 0;">Based on your list{% if recommendation_genres %}: {{ recommendation_genres|join:", " }}{% endif %}</h2>
+      </div>
+      <a class="button" href="{% url 'tracker:anime_catalog' %}">Discover more</a>
+    </div>
+
+    {% if recommendations %}
+      <div class="recommendation-grid">
+        {% for recommendation in recommendations %}
+          <a class="recommendation-card" href="{{ recommendation.detail_url }}">
+            {% if recommendation.item.cover_image_url %}
+              <img class="recommendation-poster" src="{{ recommendation.item.cover_image_url }}" alt="{{ recommendation.item.title }}" />
+            {% else %}
+              <span class="recommendation-poster poster-empty">{{ recommendation.item.get_media_type_display }}</span>
+            {% endif %}
+            <span>
+              <span class="media-title">{{ recommendation.item.title }}</span>
+              <span class="muted" style="display: block; font-size: 13px; margin-top: 4px;">
+                {{ recommendation.item.get_media_type_display }}
+                {% if recommendation.item.average_score %} - {{ recommendation.item.average_score }}/100{% endif %}
+              </span>
+              {% if recommendation.reason %}
+                <span class="description" style="display: block;">{{ recommendation.reason }}</span>
+              {% endif %}
+            </span>
+          </a>
+        {% endfor %}
+      </div>
+    {% else %}
+      <p class="muted" style="margin-bottom: 0;">
+        Rate or favorite a few titles, then browse the catalog so Yulhaverse can build better suggestions.
+      </p>
+    {% endif %}
+  </section>
+
   <section class="dashboard-grid">
     <div class="card">
       <div class="row" style="justify-content: space-between; margin-bottom: 10px;">

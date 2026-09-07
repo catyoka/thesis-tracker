@@ -22,8 +22,8 @@ class LibraryEntryAdmin(admin.ModelAdmin):
 
 @admin.register(CatalogItem)
 class CatalogItemAdmin(admin.ModelAdmin):
-    list_display = ("id", "title", "media_type", "external_id", "created_at")
-    list_filter = ("media_type",)
+    list_display = ("id", "title", "media_type", "average_score", "format", "release_status", "created_at")
+    list_filter = ("media_type", "format", "release_status")
     search_fields = ("title", "external_id")
     ordering = ("title",)
 

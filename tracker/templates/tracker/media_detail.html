@@ -5,7 +5,12 @@
 
 {% block content %}
   <section class="card detail-hero">
-    <div class="detail-backdrop"></div>
+    <div
+      class="detail-backdrop"
+      {% if item.cover_image_url %}
+        style="background-image: linear-gradient(90deg, rgba(36, 37, 56, 0.92), rgba(36, 37, 56, 0.48)), url('{{ item.cover_image_url }}');"
+      {% endif %}
+    ></div>
     <div class="detail-grid">
       <div>
         {% if item.cover_image_url %}
@@ -19,8 +24,8 @@
           {% else %}
             <a class="button" href="{% url 'tracker:anime_catalog' %}">Back to Anime</a>
           {% endif %}
-          {% if detail_data.siteUrl %}
-            <a class="button primary" href="{{ detail_data.siteUrl }}" target="_blank" rel="noopener">Open on AniList</a>
+          {% if item.site_url %}
+            <a class="button primary" href="{{ item.site_url }}" target="_blank" rel="noopener">Open on AniList</a>
           {% endif %}
         </div>
 
@@ -31,7 +36,12 @@
         <div class="eyebrow">{{ item.get_media_type_display }}</div>
         <h1 style="margin: 6px 0 8px;">{{ item.title }}</h1>
         <div class="actions" style="margin-bottom: 14px;">
-          <code>{{ item.external_id }}</code>
+          {% if item.average_score %}
+            <span class="pill">Score {{ item.average_score }}/100</span>
+          {% endif %}
+          {% if item.display_format %}
+            <span class="pill neutral">{{ item.display_format }}</span>
+          {% endif %}
           {% if user_entry %}
             <span class="pill">{{ user_entry.status }}</span>
           {% else %}
@@ -52,27 +62,18 @@
   <section class="card section-card">
     <h2>Metadata</h2>
     <div class="metadata-grid">
-      {% if detail_data.averageScore %}
-        <div class="metadata-item"><label>Average score</label><div>{{ detail_data.averageScore }}</div></div>
-      {% endif %}
-      {% if detail_data.format %}
-        <div class="metadata-item"><label>Format</label><div>{{ detail_data.format }}</div></div>
-      {% endif %}
-      {% if detail_data.status %}
-        <div class="metadata-item"><label>Release status</label><div>{{ detail_data.status }}</div></div>
-      {% endif %}
-      {% if detail_data.episodes %}
-        <div class="metadata-item"><label>Episodes</label><div>{{ detail_data.episodes }}</div></div>
-      {% endif %}
-      {% if detail_data.chapters %}
-        <div class="metadata-item"><label>Chapters</label><div>{{ detail_data.chapters }}</div></div>
-      {% endif %}
-      {% if detail_data.volumes %}
-        <div class="metadata-item"><label>Volumes</label><div>{{ detail_data.volumes }}</div></div>
-      {% endif %}
+      {% for metadata in metadata_items %}
+        <div class="metadata-item"><label>{{ metadata.label }}</label><div>{{ metadata.value }}</div></div>
+      {% empty %}
+        <p class="muted" style="margin-bottom: 0;">No extra metadata has been cached for this title yet.</p>
+      {% endfor %}
     </div>
-    {% if detail_data.genres %}
-      <div class="muted" style="margin-top: 14px;">Genres: {{ detail_data.genres|join:", " }}</div>
+    {% if item.genres %}
+      <div class="genre-list" style="margin-top: 14px;">
+        {% for genre in item.genres %}
+          <span class="pill neutral">{{ genre }}</span>
+        {% endfor %}
+      </div>
     {% endif %}
   </section>
 

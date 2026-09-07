@@ -73,7 +73,20 @@
                 <a href="{% url 'tracker:anime_detail' row.item.id %}">{{ row.item.title }}</a>
               {% endif %}
             </div>
-            <div class="faint" style="margin-top: 6px;"><code>{{ row.item.external_id }}</code></div>
+            {% if row.item.average_score or row.item.display_format or row.item.season_year %}
+              <div class="faint" style="margin-top: 6px;">
+                {% if row.item.average_score %}Score {{ row.item.average_score }}/100{% endif %}
+                {% if row.item.display_format %}{% if row.item.average_score %} - {% endif %}{{ row.item.display_format }}{% endif %}
+                {% if row.item.season_year %}{% if row.item.average_score or row.item.display_format %} - {% endif %}{{ row.item.season_year }}{% endif %}
+              </div>
+            {% endif %}
+            {% if row.item.genres %}
+              <div class="genre-list">
+                {% for genre in row.item.genres|slice:":3" %}
+                  <span class="pill neutral">{{ genre }}</span>
+                {% endfor %}
+              </div>
+            {% endif %}
             {% if row.item.description %}
               <div class="description">
                 {{ row.item.description|striptags|truncatechars:120 }}

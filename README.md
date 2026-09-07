@@ -11,7 +11,10 @@ A Django web app for tracking anime and manga lists (inspired by AniList-style w
   - `/anime/<id>/`
   - `/manga/<id>/`
 - Add/update entries in personal list
-- Library management: status, progress, rating, notes
+- Library management: status, progress, rating, notes, favorites
+- Home dashboard with library counts, status distribution, recent activity, and favorite highlights
+- Public profile pages with bio and square avatar uploads
+- People directory, friend requests, and friends overview
 - Cached fallback behavior if AniList is unavailable
 
 ## Tech stack
@@ -126,6 +129,10 @@ ruff format .
 - `/anime/` anime catalog
 - `/manga/` manga catalog
 - `/library/` user library
+- `/profile/` personal profile dashboard
+- `/profile/edit/` profile picture and bio editing
+- `/users/` public user directory
+- `/friends/` friend requests and accepted friends
 - `/signup/` account creation
 - `/login/` login
 

@@ -75,6 +75,104 @@
     </div>
   </section>
 
+  {% if comparison %}
+    <section class="card section-card">
+      <div class="row" style="justify-content: space-between; align-items: center; margin-bottom: 14px;">
+        <div>
+          <div class="eyebrow">Compared with you</div>
+          <h2 style="margin: 4px 0 0;">Shared taste</h2>
+          <p class="muted" style="margin: 6px 0 0;">{{ comparison.compatibility_note }}</p>
+        </div>
+        <div class="comparison-score">{{ comparison.compatibility_label }}</div>
+      </div>
+
+      <div class="comparison-grid" aria-label="Profile comparison summary">
+        <div class="metric-chip">
+          <div class="stat-label">Shared titles</div>
+          <strong>{{ comparison.shared_count }}</strong>
+        </div>
+        <div class="metric-chip">
+          <div class="stat-label">Mutual highlights</div>
+          <strong>{{ comparison.mutual_highlights_count }}</strong>
+        </div>
+        <div class="metric-chip">
+          <div class="stat-label">Ideas from {{ profile_user.username }}</div>
+          <strong>{{ comparison.suggested_count }}</strong>
+        </div>
+      </div>
+
+      <div class="comparison-columns">
+        <div>
+          <h3>Shared titles</h3>
+          <div class="mini-list">
+            {% for row in comparison.shared_entries %}
+              {% if row.detail_url %}
+                <a class="mini-item" href="{{ row.detail_url }}">
+                  <span>
+                    <span class="media-title">{{ row.title }}</span>
+                    <span class="muted" style="display: block; font-size: 13px;">
+                      You: {{ row.my_status }}{% if row.my_rating %}, {{ row.my_rating }}/10{% endif %}
+                    </span>
+                    <span class="muted" style="display: block; font-size: 13px;">
+                      {{ profile_user.username }}: {{ row.status }}{% if row.rating %}, {{ row.rating }}/10{% endif %}
+                    </span>
+                  </span>
+                  <strong>{{ row.media_type }}</strong>
+                </a>
+              {% else %}
+                <div class="mini-item">
+                  <span>
+                    <span class="media-title">{{ row.title }}</span>
+                    <span class="muted" style="display: block; font-size: 13px;">
+                      You: {{ row.my_status }}{% if row.my_rating %}, {{ row.my_rating }}/10{% endif %}
+                    </span>
+                    <span class="muted" style="display: block; font-size: 13px;">
+                      {{ profile_user.username }}: {{ row.status }}{% if row.rating %}, {{ row.rating }}/10{% endif %}
+                    </span>
+                  </span>
+                  <strong>{{ row.media_type }}</strong>
+                </div>
+              {% endif %}
+            {% empty %}
+              <p class="muted" style="margin-bottom: 0;">No shared titles yet.</p>
+            {% endfor %}
+          </div>
+        </div>
+
+        <div>
+          <h3>Try from {{ profile_user.username }}</h3>
+          <div class="mini-list">
+            {% for row in comparison.suggested_entries %}
+              {% if row.detail_url %}
+                <a class="mini-item" href="{{ row.detail_url }}">
+                  <span>
+                    <span class="media-title">{{ row.title }}</span>
+                    <span class="muted" style="display: block; font-size: 13px;">
+                      {{ row.status }}{% if row.rating %}, {{ row.rating }}/10{% endif %}
+                    </span>
+                  </span>
+                  <strong>{{ row.media_type }}</strong>
+                </a>
+              {% else %}
+                <div class="mini-item">
+                  <span>
+                    <span class="media-title">{{ row.title }}</span>
+                    <span class="muted" style="display: block; font-size: 13px;">
+                      {{ row.status }}{% if row.rating %}, {{ row.rating }}/10{% endif %}
+                    </span>
+                  </span>
+                  <strong>{{ row.media_type }}</strong>
+                </div>
+              {% endif %}
+            {% empty %}
+              <p class="muted" style="margin-bottom: 0;">No high-rated unseen titles from this profile yet.</p>
+            {% endfor %}
+          </div>
+        </div>
+      </div>
+    </section>
+  {% endif %}
+
   <section class="dashboard-grid">
     <div class="card">
       <div class="eyebrow">Recent activity</div>

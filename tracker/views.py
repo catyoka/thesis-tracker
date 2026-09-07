@@ -1,6 +1,7 @@
+from collections import Counter, defaultdict
 import json
-from io import BytesIO
 from difflib import SequenceMatcher
+from io import BytesIO
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
@@ -11,12 +12,30 @@ from django.db.models import Avg, Count, Q
 from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.middleware.csrf import CsrfViewMiddleware
 from django.shortcuts import get_object_or_404, redirect, render
+from django.urls import reverse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 from PIL import Image, UnidentifiedImageError
 
 from .anilist import fetch_media_catalog, fetch_media_details
 from .models import CatalogItem, Friendship, LibraryEntry, UserProfile
+
+
+CATALOG_CACHE_FIELDS = [
+    "title",
+    "media_type",
+    "description",
+    "cover_image_url",
+    "genres",
+    "average_score",
+    "format",
+    "release_status",
+    "episodes",
+    "chapters",
+    "volumes",
+    "season_year",
+    "site_url",
+]
 
 
 def _json_error(message: str, *, status: int, errors: dict | None = None) -> JsonResponse:
@@ -76,6 +95,103 @@ def _serialize_entry(entry: LibraryEntry) -> dict:
     }
 
 
+def _clean_positive_int(value) -> int | None:
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed >= 0 else None
+
+
+def _clean_token(value) -> str:
+    return str(value or "").strip()[:64]
+
+
+def _clean_url(value) -> str:
+    return str(value or "").strip()
+
+
+def _clean_genres(value) -> list[str]:
+    if not isinstance(value, list):
+        return []
+
+    genres = []
+    seen = set()
+    for genre in value:
+        if not isinstance(genre, str):
+            continue
+        cleaned = genre.strip()
+        if not cleaned or cleaned in seen:
+            continue
+        genres.append(cleaned[:64])
+        seen.add(cleaned)
+    return genres[:12]
+
+
+def _best_media_title(title_data, fallback: str = "") -> str:
+    if isinstance(title_data, dict):
+        return (
+            title_data.get("english")
+            or title_data.get("romaji")
+            or title_data.get("native")
+            or fallback
+        ).strip()
+    return str(title_data or fallback).strip()
+
+
+def _catalog_defaults_from_media_data(data: dict, media_type: str) -> dict:
+    cover_data = data.get("coverImage") or {}
+    raw_title = data.get("title")
+    title_fallback = "" if isinstance(raw_title, dict) else str(raw_title or "")
+    title = _best_media_title(raw_title, title_fallback)
+    return {
+        "title": title,
+        "media_type": media_type,
+        "description": str(data.get("description") or "").strip(),
+        "cover_image_url": _clean_url(
+            data.get("cover_image_url")
+            or cover_data.get("large")
+            or cover_data.get("medium")
+        ),
+        "genres": _clean_genres(data.get("genres")),
+        "average_score": _clean_positive_int(data.get("average_score", data.get("averageScore"))),
+        "format": _clean_token(data.get("format")),
+        "release_status": _clean_token(data.get("release_status", data.get("status"))),
+        "episodes": _clean_positive_int(data.get("episodes")),
+        "chapters": _clean_positive_int(data.get("chapters")),
+        "volumes": _clean_positive_int(data.get("volumes")),
+        "season_year": _clean_positive_int(data.get("season_year", data.get("seasonYear"))),
+        "site_url": _clean_url(data.get("site_url") or data.get("siteUrl")),
+    }
+
+
+def _catalog_detail_url(item: CatalogItem) -> str:
+    if item.media_type == CatalogItem.MediaType.MANGA:
+        return reverse("tracker:manga_detail", args=[item.id])
+    return reverse("tracker:anime_detail", args=[item.id])
+
+
+def _media_metadata_items(item: CatalogItem) -> list[dict]:
+    metadata = []
+    if item.average_score is not None:
+        metadata.append({"label": "Average score", "value": f"{item.average_score}/100"})
+    if item.display_format:
+        metadata.append({"label": "Format", "value": item.display_format})
+    if item.display_release_status:
+        metadata.append({"label": "Release status", "value": item.display_release_status})
+    if item.season_year:
+        metadata.append({"label": "Year", "value": item.season_year})
+    if item.episodes:
+        metadata.append({"label": "Episodes", "value": item.episodes})
+    if item.chapters:
+        metadata.append({"label": "Chapters", "value": item.chapters})
+    if item.volumes:
+        metadata.append({"label": "Volumes", "value": item.volumes})
+    return metadata
+
+
 def _rank_catalog_items_by_query(items: list[CatalogItem], query: str) -> list[CatalogItem]:
     normalized_query = query.strip().lower()
     if not normalized_query:
@@ -95,6 +211,243 @@ def _rank_catalog_items_by_query(items: list[CatalogItem], query: str) -> list[C
         return (bucket, -similarity, title)
 
     return sorted(items, key=score)
+
+
+def _genre_preferences_for(user) -> Counter:
+    preferences = Counter()
+    entries = LibraryEntry.objects.filter(user=user).select_related("catalog_item")
+
+    for entry in entries:
+        item = entry.catalog_item
+        if item is None or not item.genres:
+            continue
+
+        weight = 1
+        if entry.is_favorite:
+            weight += 5
+        if entry.rating:
+            if entry.rating < 6:
+                continue
+            weight += entry.rating - 5
+        if entry.status == LibraryEntry.Status.WATCHING:
+            weight += 2
+        elif entry.status == LibraryEntry.Status.COMPLETED:
+            weight += 1
+
+        preferences.update({genre: weight for genre in item.genres})
+
+    return preferences
+
+
+def _add_reason(reasons: list[str], reason: str) -> None:
+    if reason and reason not in reasons:
+        reasons.append(reason)
+
+
+def _recommendations_for(user, *, limit: int = 6) -> tuple[list[dict], list[str]]:
+    user_external_ids = set(
+        LibraryEntry.objects.filter(user=user).values_list("external_id", flat=True)
+    )
+    genre_preferences = _genre_preferences_for(user)
+    signals = defaultdict(lambda: {"item": None, "score": 0.0, "reasons": []})
+
+    for item in CatalogItem.objects.exclude(external_id__in=user_external_ids).order_by("-average_score", "title")[:300]:
+        item_genres = [genre for genre in item.genres if genre in genre_preferences]
+        if not item_genres:
+            continue
+
+        candidate = signals[item.external_id]
+        candidate["item"] = item
+        candidate["score"] += sum(genre_preferences[genre] for genre in item_genres) * 12
+        candidate["score"] += (item.average_score or 0) / 10
+        _add_reason(candidate["reasons"], f"Matches {', '.join(item_genres[:2])}")
+
+    friends = _friends_for(user)
+    if friends:
+        friend_entries = list(
+            LibraryEntry.objects.filter(user__in=friends)
+            .exclude(external_id__in=user_external_ids)
+            .filter(Q(is_favorite=True) | Q(rating__gte=8))
+            .select_related("catalog_item", "user")
+        )
+        missing_catalog_ids = [
+            entry.external_id
+            for entry in friend_entries
+            if entry.catalog_item_id is None
+        ]
+        catalog_lookup = CatalogItem.objects.in_bulk(missing_catalog_ids, field_name="external_id")
+
+        for entry in friend_entries:
+            item = entry.catalog_item or catalog_lookup.get(entry.external_id)
+            if item is None:
+                continue
+
+            candidate = signals[item.external_id]
+            candidate["item"] = item
+            candidate["score"] += 35
+            candidate["score"] += (entry.rating or 0) * 2
+            if entry.is_favorite:
+                candidate["score"] += 15
+            if entry.rating:
+                _add_reason(candidate["reasons"], f"{entry.user.username} rated it {entry.rating}/10")
+            elif entry.is_favorite:
+                _add_reason(candidate["reasons"], f"{entry.user.username} favorited it")
+
+    if not signals:
+        for item in CatalogItem.objects.exclude(external_id__in=user_external_ids).order_by("-average_score", "title")[:limit]:
+            candidate = signals[item.external_id]
+            candidate["item"] = item
+            candidate["score"] = item.average_score or 0
+            _add_reason(candidate["reasons"], "Popular in your cached catalog")
+
+    ranked = sorted(
+        (candidate for candidate in signals.values() if candidate["item"] is not None),
+        key=lambda candidate: (
+            -candidate["score"],
+            -(candidate["item"].average_score or 0),
+            candidate["item"].title,
+        ),
+    )
+
+    recommendations = [
+        {
+            "item": candidate["item"],
+            "detail_url": _catalog_detail_url(candidate["item"]),
+            "reason": " + ".join(candidate["reasons"][:2]),
+        }
+        for candidate in ranked[:limit]
+    ]
+    top_genres = [genre for genre, _count in genre_preferences.most_common(4)]
+    return recommendations, top_genres
+
+
+def _entry_catalog_item(entry: LibraryEntry, catalog_lookup: dict[str, CatalogItem]) -> CatalogItem | None:
+    return entry.catalog_item or catalog_lookup.get(entry.external_id)
+
+
+def _comparison_entry_row(
+    entry: LibraryEntry,
+    *,
+    catalog_lookup: dict[str, CatalogItem],
+    my_entry: LibraryEntry | None = None,
+) -> dict:
+    item = _entry_catalog_item(entry, catalog_lookup)
+    if item is None and my_entry is not None:
+        item = _entry_catalog_item(my_entry, catalog_lookup)
+    return {
+        "title": entry.title,
+        "media_type": entry.get_media_type_display(),
+        "status": entry.get_status_display(),
+        "rating": entry.rating,
+        "is_favorite": entry.is_favorite,
+        "my_status": my_entry.get_status_display() if my_entry else "",
+        "my_rating": my_entry.rating if my_entry else None,
+        "my_is_favorite": my_entry.is_favorite if my_entry else False,
+        "detail_url": _catalog_detail_url(item) if item else "",
+    }
+
+
+def _profile_comparison(current_user, profile_user, *, limit: int = 5) -> dict | None:
+    if current_user == profile_user:
+        return None
+
+    my_entries = list(
+        LibraryEntry.objects.filter(user=current_user).select_related("catalog_item")
+    )
+    their_entries = list(
+        LibraryEntry.objects.filter(user=profile_user).select_related("catalog_item")
+    )
+
+    if not my_entries and not their_entries:
+        return None
+
+    my_by_external_id = {entry.external_id: entry for entry in my_entries}
+    their_by_external_id = {entry.external_id: entry for entry in their_entries}
+    shared_external_ids = set(my_by_external_id) & set(their_by_external_id)
+    comparison_external_ids = {
+        entry.external_id
+        for entry in [*my_entries, *their_entries]
+        if entry.catalog_item_id is None
+    }
+    catalog_lookup = CatalogItem.objects.in_bulk(comparison_external_ids, field_name="external_id")
+
+    shared_rows = [
+        _comparison_entry_row(
+            their_by_external_id[external_id],
+            catalog_lookup=catalog_lookup,
+            my_entry=my_by_external_id[external_id],
+        )
+        for external_id in shared_external_ids
+    ]
+    shared_rows.sort(
+        key=lambda row: (
+            row["my_is_favorite"] or row["is_favorite"],
+            row["my_rating"] or 0,
+            row["rating"] or 0,
+            row["title"],
+        ),
+        reverse=True,
+    )
+
+    suggested_entries = [
+        entry
+        for entry in their_entries
+        if entry.external_id not in my_by_external_id
+        and (entry.is_favorite or (entry.rating is not None and entry.rating >= 8))
+    ]
+    suggested_entries.sort(
+        key=lambda entry: (
+            entry.is_favorite,
+            entry.rating or 0,
+            entry.updated_at,
+        ),
+        reverse=True,
+    )
+    suggestion_rows = [
+        _comparison_entry_row(entry, catalog_lookup=catalog_lookup)
+        for entry in suggested_entries[:limit]
+    ]
+
+    rated_pairs = [
+        (my_by_external_id[external_id].rating, their_by_external_id[external_id].rating)
+        for external_id in shared_external_ids
+        if my_by_external_id[external_id].rating is not None
+        and their_by_external_id[external_id].rating is not None
+    ]
+    compatibility_score = None
+    compatibility_note = "Add more shared ratings to unlock a tighter score."
+    if rated_pairs:
+        average_gap = sum(abs(my_rating - their_rating) for my_rating, their_rating in rated_pairs) / len(rated_pairs)
+        compatibility_score = round(max(0, 100 - average_gap * 12))
+        compatibility_note = f"Based on {len(rated_pairs)} shared rated title{'s' if len(rated_pairs) != 1 else ''}."
+    elif my_entries and their_entries:
+        overlap_ratio = len(shared_external_ids) / max(1, min(len(my_entries), len(their_entries)))
+        compatibility_score = round(overlap_ratio * 100)
+        compatibility_note = "Based on list overlap."
+
+    mutual_highlights_count = sum(
+        1
+        for external_id in shared_external_ids
+        if (
+            my_by_external_id[external_id].is_favorite
+            or (my_by_external_id[external_id].rating is not None and my_by_external_id[external_id].rating >= 8)
+        )
+        and (
+            their_by_external_id[external_id].is_favorite
+            or (their_by_external_id[external_id].rating is not None and their_by_external_id[external_id].rating >= 8)
+        )
+    )
+
+    return {
+        "shared_count": len(shared_external_ids),
+        "mutual_highlights_count": mutual_highlights_count,
+        "suggested_count": len(suggested_entries),
+        "compatibility_score": compatibility_score,
+        "compatibility_label": f"{compatibility_score}%" if compatibility_score is not None else "-",
+        "compatibility_note": compatibility_note,
+        "shared_entries": shared_rows[:limit],
+        "suggested_entries": suggestion_rows,
+    }
 
 
 def _library_overview(user) -> dict:
@@ -209,11 +562,16 @@ def home_page(request: HttpRequest) -> HttpResponse:
         return redirect("login")
 
     overview = _library_overview(request.user)
+    recommendations, recommendation_genres = _recommendations_for(request.user)
 
     return render(
         request,
         "tracker/home.html",
-        overview,
+        {
+            **overview,
+            "recommendations": recommendations,
+            "recommendation_genres": recommendation_genres,
+        },
     )
 
 
@@ -316,6 +674,7 @@ def public_profile_page(request: HttpRequest, username: str) -> HttpResponse:
     profile = _ensure_profile(profile_user)
     overview = _library_overview(profile_user)
     friendship = _friendship_context(request.user, profile_user)
+    comparison = _profile_comparison(request.user, profile_user)
 
     return render(
         request,
@@ -324,6 +683,7 @@ def public_profile_page(request: HttpRequest, username: str) -> HttpResponse:
             **overview,
             "profile_user": profile_user,
             "profile": profile,
+            "comparison": comparison,
             **friendship,
         },
     )
@@ -480,14 +840,10 @@ def media_catalog_page(request: HttpRequest, media_type: str) -> HttpResponse:
         )
         preferred_external_ids = [data["external_id"] for data in remote_items]
         for data in remote_items:
+            media_type_from_response = data.get("media_type") or normalized_type
             CatalogItem.objects.update_or_create(
                 external_id=data["external_id"],
-                defaults={
-                    "title": data["title"],
-                    "media_type": data["media_type"],
-                    "description": data["description"],
-                    "cover_image_url": data["cover_image_url"],
-                },
+                defaults=_catalog_defaults_from_media_data(data, media_type_from_response),
             )
         if query:
             source_note = "Showing AniList search results (up to 50), cached locally."
@@ -562,20 +918,21 @@ def media_detail_page(request: HttpRequest, media_type: str, item_id: int) -> Ht
         if raw_id.isdigit():
             try:
                 detail_data = fetch_media_details(int(raw_id))
-                detail_title_obj = detail_data.get("title") or {}
-                item.title = (
-                    detail_title_obj.get("english")
-                    or detail_title_obj.get("romaji")
-                    or detail_title_obj.get("native")
-                    or item.title
-                )
-                item.description = (detail_data.get("description") or item.description).strip()
-                item.cover_image_url = ((detail_data.get("coverImage") or {}).get("large") or item.cover_image_url).strip()
-                item.save(update_fields=["title", "description", "cover_image_url"])
+                defaults = _catalog_defaults_from_media_data(detail_data, item.media_type)
+                if not defaults["title"]:
+                    defaults["title"] = item.title
+                if not defaults["description"]:
+                    defaults["description"] = item.description
+                if not defaults["cover_image_url"]:
+                    defaults["cover_image_url"] = item.cover_image_url
+                for field, value in defaults.items():
+                    setattr(item, field, value)
+                item.save(update_fields=CATALOG_CACHE_FIELDS)
             except RuntimeError:
                 detail_error = "Could not load full details from AniList right now."
 
     user_entry = LibraryEntry.objects.filter(user=request.user, external_id=item.external_id).first()
+    metadata_items = _media_metadata_items(item)
     return render(
         request,
         "tracker/media_detail.html",
@@ -583,6 +940,7 @@ def media_detail_page(request: HttpRequest, media_type: str, item_id: int) -> Ht
             "item": item,
             "detail_data": detail_data,
             "detail_error": detail_error,
+            "metadata_items": metadata_items,
             "user_entry": user_entry,
             "status_choices": LibraryEntry.Status.choices,
         },

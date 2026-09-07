@@ -461,6 +461,45 @@
         background: var(--surface-soft);
       }
 
+      .recommendation-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+        gap: 16px;
+      }
+
+      .recommendation-card {
+        min-width: 0;
+        display: grid;
+        grid-template-columns: 72px minmax(0, 1fr);
+        gap: 12px;
+        align-items: start;
+        padding: 12px;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        background: var(--surface-soft);
+      }
+
+      .recommendation-card:hover {
+        border-color: var(--accent);
+        background: #f9fdff;
+      }
+
+      .recommendation-poster {
+        width: 72px;
+        aspect-ratio: 2 / 3;
+        object-fit: cover;
+        border-radius: 5px;
+        border: 1px solid var(--border);
+        background: #dce5ef;
+      }
+
+      .genre-list {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin-top: 8px;
+      }
+
       .insight-list {
         display: grid;
         gap: 12px;
@@ -512,6 +551,33 @@
         color: var(--text);
         font-size: 22px;
         line-height: 1;
+      }
+
+      .comparison-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 12px;
+        margin-bottom: 18px;
+      }
+
+      .comparison-score {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 78px;
+        min-height: 48px;
+        padding: 8px 12px;
+        border-radius: 6px;
+        background: var(--accent);
+        color: #ffffff;
+        font-size: 22px;
+        font-weight: 900;
+      }
+
+      .comparison-columns {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+        gap: 18px;
       }
 
       .avatar {
@@ -772,6 +838,8 @@
         background:
           linear-gradient(90deg, rgba(36, 37, 56, 0.9), rgba(36, 37, 56, 0.48)),
           var(--nav);
+        background-position: center;
+        background-size: cover;
       }
 
       .detail-grid {
@@ -855,6 +923,11 @@
         }
 
         .metric-strip {
+          grid-template-columns: 1fr;
+        }
+
+        .comparison-grid,
+        .comparison-columns {
           grid-template-columns: 1fr;
         }
 

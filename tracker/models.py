@@ -12,6 +12,15 @@ class CatalogItem(models.Model):
     media_type = models.CharField(max_length=16, choices=MediaType.choices)
     description = models.TextField(blank=True)
     cover_image_url = models.URLField(blank=True)
+    genres = models.JSONField(default=list, blank=True)
+    average_score = models.PositiveSmallIntegerField(null=True, blank=True)
+    format = models.CharField(max_length=64, blank=True)
+    release_status = models.CharField(max_length=64, blank=True)
+    episodes = models.PositiveIntegerField(null=True, blank=True)
+    chapters = models.PositiveIntegerField(null=True, blank=True)
+    volumes = models.PositiveIntegerField(null=True, blank=True)
+    season_year = models.PositiveIntegerField(null=True, blank=True)
+    site_url = models.URLField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -22,6 +31,14 @@ class CatalogItem(models.Model):
 
     def __str__(self) -> str:
         return f"{self.title} ({self.media_type})"
+
+    @property
+    def display_format(self) -> str:
+        return self.format.replace("_", " ").title()
+
+    @property
+    def display_release_status(self) -> str:
+        return self.release_status.replace("_", " ").title()
 
 
 class UserProfile(models.Model):

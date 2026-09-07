@@ -56,9 +56,19 @@ def fetch_media_catalog(media_type: str, query: str, *, per_page: int = 25) -> l
             native
           }
           description(asHtml: false)
+          siteUrl
           coverImage {
             medium
+            large
           }
+          genres
+          averageScore
+          episodes
+          chapters
+          volumes
+          format
+          status
+          seasonYear
         }
       }
     }
@@ -90,7 +100,7 @@ def fetch_media_catalog(media_type: str, query: str, *, per_page: int = 25) -> l
         )
         description = media.get("description") or ""
         cover_obj = media.get("coverImage") or {}
-        cover_url = cover_obj.get("medium") or ""
+        cover_url = cover_obj.get("large") or cover_obj.get("medium") or ""
 
         results.append(
             {
@@ -99,6 +109,15 @@ def fetch_media_catalog(media_type: str, query: str, *, per_page: int = 25) -> l
                 "media_type": media_type,
                 "description": description.strip(),
                 "cover_image_url": cover_url,
+                "genres": media.get("genres") or [],
+                "average_score": media.get("averageScore"),
+                "episodes": media.get("episodes"),
+                "chapters": media.get("chapters"),
+                "volumes": media.get("volumes"),
+                "format": media.get("format") or "",
+                "release_status": media.get("status") or "",
+                "season_year": media.get("seasonYear"),
+                "site_url": media.get("siteUrl") or "",
             }
         )
 
@@ -117,8 +136,10 @@ def fetch_media_details(anilist_id: int) -> dict:
           native
         }
         description(asHtml: false)
+        siteUrl
         coverImage {
           large
+          medium
         }
         genres
         averageScore
@@ -127,6 +148,7 @@ def fetch_media_details(anilist_id: int) -> dict:
         volumes
         format
         status
+        seasonYear
       }
     }
     """
