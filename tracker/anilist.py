@@ -40,15 +40,43 @@ def _anilist_request(gql_query: str, variables: dict) -> dict:
     return parsed
 
 
-def fetch_media_catalog(media_type: str, query: str, *, per_page: int = 25) -> list[dict]:
+def _media_tag_names(media: dict) -> list[str]:
+    tag_names = []
+    seen = set()
+    for tag in media.get("tags") or []:
+        if not isinstance(tag, dict) or tag.get("isAdult"):
+            continue
+        name = str(tag.get("name") or "").strip()
+        if not name or name in seen:
+            continue
+        tag_names.append(name)
+        seen.add(name)
+    return tag_names
+
+
+def fetch_media_catalog(
+    media_type: str,
+    query: str,
+    *,
+    per_page: int = 25,
+    genre: str = "",
+    tag: str = "",
+) -> list[dict]:
     """
     Fetch anime/manga list from AniList GraphQL API.
     Returns simplified dictionaries for local caching.
     """
     gql_query = """
-    query ($type: MediaType, $search: String, $sort: [MediaSort], $perPage: Int) {
+    query (
+      $type: MediaType,
+      $search: String,
+      $sort: [MediaSort],
+      $perPage: Int,
+      $genres: [String],
+      $tags: [String]
+    ) {
       Page(page: 1, perPage: $perPage) {
-        media(type: $type, search: $search, sort: $sort) {
+        media(type: $type, search: $search, genre_in: $genres, tag_in: $tags, sort: $sort) {
           id
           title {
             romaji
@@ -61,7 +89,17 @@ def fetch_media_catalog(media_type: str, query: str, *, per_page: int = 25) -> l
             medium
             large
           }
+          trailer {
+            id
+            site
+            thumbnail
+          }
           genres
+          tags {
+            name
+            rank
+            isAdult
+          }
           averageScore
           episodes
           chapters
@@ -81,6 +119,8 @@ def fetch_media_catalog(media_type: str, query: str, *, per_page: int = 25) -> l
             "search": query or None,
             "sort": ["POPULARITY_DESC"],
             "perPage": per_page,
+            "genres": [genre] if genre else None,
+            "tags": [tag] if tag else None,
         },
     )
 
@@ -101,6 +141,7 @@ def fetch_media_catalog(media_type: str, query: str, *, per_page: int = 25) -> l
         description = media.get("description") or ""
         cover_obj = media.get("coverImage") or {}
         cover_url = cover_obj.get("large") or cover_obj.get("medium") or ""
+        trailer_obj = media.get("trailer") or {}
 
         results.append(
             {
@@ -109,7 +150,11 @@ def fetch_media_catalog(media_type: str, query: str, *, per_page: int = 25) -> l
                 "media_type": media_type,
                 "description": description.strip(),
                 "cover_image_url": cover_url,
+                "trailer_id": trailer_obj.get("id") or "",
+                "trailer_site": trailer_obj.get("site") or "",
+                "trailer_thumbnail_url": trailer_obj.get("thumbnail") or "",
                 "genres": media.get("genres") or [],
+                "tags": _media_tag_names(media),
                 "average_score": media.get("averageScore"),
                 "episodes": media.get("episodes"),
                 "chapters": media.get("chapters"),
@@ -122,6 +167,62 @@ def fetch_media_catalog(media_type: str, query: str, *, per_page: int = 25) -> l
         )
 
     return results
+
+
+def _character_connection_query() -> str:
+    return """
+    query ($id: Int, $page: Int) {
+      Media(id: $id) {
+        characters(sort: [ROLE, RELEVANCE, ID], page: $page, perPage: 50) {
+          pageInfo {
+            currentPage
+            hasNextPage
+          }
+          edges {
+            role
+            node {
+              name {
+                full
+              }
+              image {
+                medium
+                large
+              }
+            }
+            voiceActors(language: JAPANESE, sort: [RELEVANCE, ID]) {
+              name {
+                full
+              }
+              image {
+                medium
+                large
+              }
+            }
+          }
+        }
+      }
+    }
+    """
+
+
+def _append_remaining_character_pages(anilist_id: int, media: dict) -> None:
+    characters = (media.get("characters") or {})
+    page_info = characters.get("pageInfo") or {}
+    edges = characters.get("edges") or []
+
+    while page_info.get("hasNextPage"):
+        next_page = (page_info.get("currentPage") or 1) + 1
+        parsed = _anilist_request(_character_connection_query(), {"id": anilist_id, "page": next_page})
+        next_characters = (((parsed.get("data") or {}).get("Media") or {}).get("characters")) or {}
+        next_edges = next_characters.get("edges") or []
+        if not next_edges:
+            break
+        edges.extend(next_edges)
+        page_info = next_characters.get("pageInfo") or {}
+
+    characters["edges"] = edges
+    characters["pageInfo"] = page_info
+    media["characters"] = characters
 
 
 def fetch_media_details(anilist_id: int) -> dict:
@@ -141,7 +242,58 @@ def fetch_media_details(anilist_id: int) -> dict:
           large
           medium
         }
+        trailer {
+          id
+          site
+          thumbnail
+        }
+        staff(sort: [RELEVANCE, ID], perPage: 30) {
+          edges {
+            role
+            node {
+              name {
+                full
+              }
+              image {
+                medium
+                large
+              }
+            }
+          }
+        }
+        characters(sort: [ROLE, RELEVANCE, ID], page: 1, perPage: 50) {
+          pageInfo {
+            currentPage
+            hasNextPage
+          }
+          edges {
+            role
+            node {
+              name {
+                full
+              }
+              image {
+                medium
+                large
+              }
+            }
+            voiceActors(language: JAPANESE, sort: [RELEVANCE, ID]) {
+              name {
+                full
+              }
+              image {
+                medium
+                large
+              }
+            }
+          }
+        }
         genres
+        tags {
+          name
+          rank
+          isAdult
+        }
         averageScore
         episodes
         chapters
@@ -156,4 +308,5 @@ def fetch_media_details(anilist_id: int) -> dict:
     media = (parsed.get("data") or {}).get("Media") or {}
     if not media:
         raise RuntimeError("AniList media details not found.")
+    _append_remaining_character_pages(anilist_id, media)
     return media

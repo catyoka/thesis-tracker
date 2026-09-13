@@ -21,97 +21,147 @@
         {% endif %}
       </p>
     </div>
-    <form method="get" class="row" style="align-items: end;">
-      <div class="field" style="min-width: 260px;">
-        <label for="q">Search title</label>
-        <input id="q" type="text" name="q" value="{{ query }}" placeholder="Search by title" />
-      </div>
-      <div class="form-actions">
-        <button class="primary" type="submit">Search</button>
-      </div>
-    </form>
+    <div class="hero-actions">
+      <a class="button {% if selected_media_type != 'MANGA' %}primary{% endif %}" href="{% url 'tracker:anime_catalog' %}">Anime</a>
+      <a class="button {% if selected_media_type == 'MANGA' %}primary{% endif %}" href="{% url 'tracker:manga_catalog' %}">Manga</a>
+    </div>
   </section>
 
-  <section>
-    <div class="row" style="justify-content: space-between; margin-bottom: 14px;">
-      <div>
-        <div class="eyebrow">Results</div>
-        <h2 style="margin: 4px 0 0;">{{ item_rows|length }} titles</h2>
-      </div>
-      <div class="actions">
-        <a class="button {% if selected_media_type != 'MANGA' %}primary{% endif %}" href="{% url 'tracker:anime_catalog' %}">Anime</a>
-        <a class="button {% if selected_media_type == 'MANGA' %}primary{% endif %}" href="{% url 'tracker:manga_catalog' %}">Manga</a>
-      </div>
-    </div>
-
-    <div class="catalog-grid">
-      {% for row in item_rows %}
-        <article class="media-card">
-          {% if row.item.media_type == "MANGA" %}
-            <a class="poster-link" href="{% url 'tracker:manga_detail' row.item.id %}">
-          {% else %}
-            <a class="poster-link" href="{% url 'tracker:anime_detail' row.item.id %}">
-          {% endif %}
-              {% if row.item.cover_image_url %}
-                <img class="poster" src="{{ row.item.cover_image_url }}" alt="{{ row.item.title }}" />
-              {% else %}
-                <span class="poster-empty">{{ row.item.get_media_type_display }}</span>
-              {% endif %}
-              <span class="poster-status">
-                {% if row.user_status %}
-                  <span class="pill">{{ row.user_status }}</span>
-                {% else %}
-                  <span class="pill neutral">Not in list</span>
-                {% endif %}
-              </span>
-            </a>
-          <div class="media-card-body">
-            <div class="media-title">
-              {% if row.item.media_type == "MANGA" %}
-                <a href="{% url 'tracker:manga_detail' row.item.id %}">{{ row.item.title }}</a>
-              {% else %}
-                <a href="{% url 'tracker:anime_detail' row.item.id %}">{{ row.item.title }}</a>
-              {% endif %}
-            </div>
-            {% if row.item.average_score or row.item.display_format or row.item.season_year %}
-              <div class="faint" style="margin-top: 6px;">
-                {% if row.item.average_score %}Score {{ row.item.average_score }}/100{% endif %}
-                {% if row.item.display_format %}{% if row.item.average_score %} - {% endif %}{{ row.item.display_format }}{% endif %}
-                {% if row.item.season_year %}{% if row.item.average_score or row.item.display_format %} - {% endif %}{{ row.item.season_year }}{% endif %}
-              </div>
-            {% endif %}
-            {% if row.item.genres %}
-              <div class="genre-list">
-                {% for genre in row.item.genres|slice:":3" %}
-                  <span class="pill neutral">{{ genre }}</span>
-                {% endfor %}
-              </div>
-            {% endif %}
-            {% if row.item.description %}
-              <div class="description">
-                {{ row.item.description|striptags|truncatechars:120 }}
-              </div>
-            {% endif %}
-            <form method="post" action="{% url 'tracker:catalog_add' row.item.id %}" class="catalog-card-form">
-              {% csrf_token %}
-              <div>
-                <label>Status</label>
-                <select name="status">
-                  {% for value,label in status_choices %}
-                    <option value="{{ value }}" {% if value == "PLANNED" %}selected{% endif %}>{{ label }}</option>
-                  {% endfor %}
-                </select>
-              </div>
-              <button class="primary" type="submit">Save</button>
-            </form>
-          </div>
-        </article>
-      {% empty %}
-        <div class="card">
-          <h2>No catalog entries found</h2>
-          <p class="muted" style="margin-bottom: 0;">Try another search or come back when the AniList API is available.</p>
+  <section class="catalog-browse-shell">
+    <aside class="catalog-filter-panel">
+      <form method="get" class="catalog-filter-form">
+        <div>
+          <label for="q">Search title</label>
+          <input id="q" type="search" name="q" value="{{ query }}" placeholder="Search by title" />
         </div>
-      {% endfor %}
+        <div>
+          <label for="genre">Category</label>
+          <input id="genre" type="search" name="genre" value="{{ selected_genre }}" list="genre-options" placeholder="Any category" autocomplete="off" />
+          <datalist id="genre-options">
+            {% for genre in genre_options %}
+              <option value="{{ genre }}"></option>
+            {% endfor %}
+          </datalist>
+        </div>
+        <div>
+          <label for="tag">Tag</label>
+          <input id="tag" type="search" name="tag" value="{{ selected_tag }}" list="tag-options" placeholder="Search AniList tags" autocomplete="off" />
+          <datalist id="tag-options">
+            {% for tag in tag_options %}
+              <option value="{{ tag }}"></option>
+            {% endfor %}
+          </datalist>
+        </div>
+        <div class="catalog-filter-actions">
+          <button class="primary" type="submit">Apply</button>
+          <a class="button" href="{{ clear_filters_url }}">Clear</a>
+        </div>
+      </form>
+
+      <div class="catalog-filter-group">
+        <div class="profile-side-label">Categories</div>
+        <div class="catalog-filter-chip-list">
+          {% for genre in genre_links %}
+            <a class="{% if genre.active %}active{% endif %}" href="{{ genre.url }}">{{ genre.label }}</a>
+          {% endfor %}
+        </div>
+      </div>
+    </aside>
+
+    <div class="catalog-results-panel">
+      <div class="row" style="justify-content: space-between; margin-bottom: 14px;">
+        <div>
+          <div class="eyebrow">Results</div>
+          <h2 style="margin: 4px 0 0;">{{ item_rows|length }} titles</h2>
+        </div>
+        {% if active_filter_count %}
+          <div class="genre-list" style="margin-top: 0;">
+            {% if selected_genre %}
+              <span class="pill">{{ selected_genre }}</span>
+            {% endif %}
+            {% if selected_tag %}
+              <span class="pill">{{ selected_tag }}</span>
+            {% endif %}
+          </div>
+        {% endif %}
+      </div>
+
+      <div class="catalog-grid">
+        {% for row in item_rows %}
+          <article class="media-card">
+            {% if row.item.media_type == "MANGA" %}
+              <a class="poster-link" href="{% url 'tracker:manga_detail' row.item.id %}">
+              {% else %}
+              <a class="poster-link" href="{% url 'tracker:anime_detail' row.item.id %}">
+            {% endif %}
+                {% if row.item.cover_image_url %}
+                  <img class="poster" src="{{ row.item.cover_image_url }}" alt="{{ row.item.title }}" />
+                {% else %}
+                  <span class="poster-empty">{{ row.item.get_media_type_display }}</span>
+                {% endif %}
+                <span class="poster-status">
+                  {% if row.user_status %}
+                    <span class="pill">{{ row.user_status_label }}</span>
+                  {% else %}
+                    <span class="pill neutral">Not in list</span>
+                  {% endif %}
+                </span>
+              </a>
+            <div class="media-card-body">
+              <div class="media-title">
+                {% if row.item.media_type == "MANGA" %}
+                  <a href="{% url 'tracker:manga_detail' row.item.id %}">{{ row.item.title }}</a>
+                {% else %}
+                  <a href="{% url 'tracker:anime_detail' row.item.id %}">{{ row.item.title }}</a>
+                {% endif %}
+              </div>
+              {% if row.item.average_score or row.item.display_format or row.item.season_year %}
+                <div class="faint" style="margin-top: 6px;">
+                  {% if row.item.average_score %}Score {{ row.item.average_score }}/100{% endif %}
+                  {% if row.item.display_format %}{% if row.item.average_score %} - {% endif %}{{ row.item.display_format }}{% endif %}
+                  {% if row.item.season_year %}{% if row.item.average_score or row.item.display_format %} - {% endif %}{{ row.item.season_year }}{% endif %}
+                </div>
+              {% endif %}
+              {% if row.item.genres %}
+                <div class="genre-list">
+                  {% for genre in row.item.genres|slice:":3" %}
+                    <span class="pill neutral">{{ genre }}</span>
+                  {% endfor %}
+                </div>
+              {% endif %}
+              {% if row.item.tags %}
+                <div class="genre-list">
+                  {% for tag in row.item.tags|slice:":2" %}
+                    <span class="pill neutral">{{ tag }}</span>
+                  {% endfor %}
+                </div>
+              {% endif %}
+              {% if row.item.description %}
+                <div class="description">
+                  {{ row.item.description|striptags|truncatechars:120 }}
+                </div>
+              {% endif %}
+              <form method="post" action="{% url 'tracker:catalog_add' row.item.id %}" class="catalog-card-form">
+                {% csrf_token %}
+                <div>
+                  <label>Status</label>
+                  <select name="status">
+                    {% for option in status_choices %}
+                      <option value="{{ option.value }}" {% if option.value == "PLANNED" %}selected{% endif %}>{{ option.label }}</option>
+                    {% endfor %}
+                  </select>
+                </div>
+                <button class="primary" type="submit">Save</button>
+              </form>
+            </div>
+          </article>
+        {% empty %}
+          <div class="card">
+            <h2>No catalog entries found</h2>
+            <p class="muted" style="margin-bottom: 0;">Try another title, category, or tag.</p>
+          </div>
+        {% endfor %}
+      </div>
     </div>
   </section>
 {% endblock %}

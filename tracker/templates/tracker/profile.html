@@ -4,32 +4,60 @@
 {% block page_title %}Profile{% endblock %}
 
 {% block content %}
-  <section class="card hero-panel">
-    <div class="row" style="align-items: center;">
-      <div class="avatar">
+  <section class="profile-showcase" id="overview">
+    <div class="profile-banner{% if profile.display_banner_url %} has-custom-banner{% endif %}">
+      {% if profile.display_banner_url %}
+        <img class="profile-banner-image" src="{{ profile.display_banner_url }}" alt="" />
+      {% elif profile_banner_images %}
+        <div class="profile-banner-strip" aria-hidden="true">
+          {% for image_url in profile_banner_images %}
+            <img src="{{ image_url }}" alt="" />
+          {% endfor %}
+        </div>
+      {% endif %}
+      <div class="profile-banner-overlay"></div>
+    </div>
+
+    <div class="profile-identity">
+      <div class="profile-avatar{% if profile.avatar_should_float %} is-floating{% endif %}">
         {% if profile.display_avatar_url %}
           <img src="{{ profile.display_avatar_url }}" alt="{{ profile_user.username }}" />
         {% else %}
           {{ profile_user.username|first|upper }}
         {% endif %}
       </div>
-      <div>
+
+      <div class="profile-copy">
         <div class="eyebrow">Profile</div>
-        <h1 style="margin: 6px 0 0;">{{ profile_user.username }}</h1>
+        <h1>{{ profile_user.username }}</h1>
         <p>
           {% if profile.bio %}{{ profile.bio }}{% else %}Personal tracking overview for your anime and manga library.{% endif %}
         </p>
+        <div class="profile-chip-row" aria-label="Profile summary">
+          <span>{{ total_count }} entries</span>
+          <span>{{ anime_count }} anime</span>
+          <span>{{ manga_count }} manga</span>
+          <span>{{ favorite_count }} favorites</span>
+        </div>
+      </div>
+
+      <div class="profile-actions">
+        <a class="button primary" href="{% url 'tracker:profile_edit' %}">Edit Profile</a>
+        <a class="button primary" href="{% url 'tracker:library' %}">Manage List</a>
+        <a class="button" href="{% url 'tracker:friends' %}">Friends</a>
       </div>
     </div>
-    <div class="hero-actions">
-      <a class="button primary" href="{% url 'tracker:profile_edit' %}">Edit Profile</a>
-      <a class="button primary" href="{% url 'tracker:library' %}">Manage List</a>
-      <a class="button" href="{% url 'tracker:friends' %}">Friends</a>
-      <a class="button" href="{% url 'tracker:library' %}?favorite=1">Favorites</a>
-    </div>
+
+    <nav class="profile-nav" aria-label="Profile sections">
+      {% for item in profile_media_nav %}
+        <a class="{% if item.active %}active{% endif %}" href="{{ item.url }}">{{ item.label }}</a>
+      {% endfor %}
+      <a href="#stats">Stats</a>
+      <a href="#social">Social</a>
+    </nav>
   </section>
 
-  <section class="stat-grid" aria-label="Profile library summary">
+  <section class="stat-grid" id="stats" aria-label="Profile library summary">
     <div class="card stat-card">
       <div class="stat-label">Total entries</div>
       <div class="stat-value">{{ total_count }}</div>
@@ -61,7 +89,75 @@
     </div>
   </section>
 
-  <section class="dashboard-grid">
+  <section class="profile-list-shell section-card" id="library-lists">
+    <aside class="profile-list-sidebar">
+      <div>
+        <div class="profile-side-label">Lists</div>
+        <nav class="profile-side-tabs" aria-label="Profile library lists">
+          {% for tab in profile_list_tabs %}
+            <a class="{% if tab.active %}active{% endif %}" href="{{ tab.url }}">
+              <span>{{ tab.label }}</span>
+              <strong>{{ tab.count }}</strong>
+            </a>
+          {% endfor %}
+        </nav>
+      </div>
+
+      <div class="profile-side-card">
+        <div class="profile-side-label">Stats</div>
+        <div class="profile-side-stat"><span>Completed</span><strong>{{ completed_count }}</strong></div>
+        <div class="profile-side-stat"><span>Rated</span><strong>{{ rated_count }}</strong></div>
+        <div class="profile-side-stat"><span>Average</span><strong>{% if average_rating %}{{ average_rating|floatformat:1 }}{% else %}-{% endif %}</strong></div>
+      </div>
+    </aside>
+
+    <div class="profile-list-main">
+      <div class="profile-list-heading">
+        <div>
+          <div class="eyebrow">Library lists</div>
+          <h2>{{ active_profile_list_label }}</h2>
+        </div>
+        <a class="button" href="{% url 'tracker:library' %}">Manage List</a>
+      </div>
+
+      <div class="profile-entry-grid">
+        {% for row in profile_list_rows %}
+          {% if row.detail_url %}
+            <a class="profile-entry-card" href="{{ row.detail_url }}">
+          {% else %}
+            <article class="profile-entry-card">
+          {% endif %}
+              <span class="profile-entry-poster">
+                {% if row.cover_image_url %}
+                  <img src="{{ row.cover_image_url }}" alt="{{ row.entry.title }}" />
+                {% else %}
+                  <span class="poster-empty">{{ row.entry.get_media_type_display }}</span>
+                {% endif %}
+              </span>
+              <span class="profile-entry-overlay">
+                <strong>{{ row.entry.title }}</strong>
+                <span>{{ row.entry.status_label }}</span>
+                <small>
+                  {{ row.entry.progress }} progress
+                  {% if row.entry.rating %} · {{ row.entry.rating }}/10{% endif %}
+                </small>
+              </span>
+          {% if row.detail_url %}
+            </a>
+          {% else %}
+            </article>
+          {% endif %}
+        {% empty %}
+          <div class="card profile-empty-card">
+            <h2>No entries in this list yet.</h2>
+            <p class="muted">Browse the catalog or switch to another list category.</p>
+          </div>
+        {% endfor %}
+      </div>
+    </div>
+  </section>
+
+  <section class="dashboard-grid" id="social">
     <div class="card">
       <div class="row" style="justify-content: space-between; margin-bottom: 10px;">
         <div>
@@ -91,7 +187,7 @@
                   {% endif %}
                 </td>
                 <td>{{ entry.get_media_type_display }}</td>
-                <td><span class="pill">{{ entry.status }}</span></td>
+                <td><span class="pill">{{ entry.status_label }}</span></td>
                 <td>{% if entry.rating %}{{ entry.rating }}/10{% else %}<span class="muted">-</span>{% endif %}</td>
                 <td>{{ entry.updated_at|date:"Y-m-d H:i" }}</td>
               </tr>

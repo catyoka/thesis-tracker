@@ -21,7 +21,7 @@
       <div class="field full">
         <label>Current profile picture</label>
         <div class="row" style="align-items: center;">
-          <div class="avatar">
+          <div class="avatar{% if profile.avatar_should_float %} is-floating{% endif %}">
             {% if profile.display_avatar_url %}
               <img src="{{ profile.display_avatar_url }}" alt="{{ user.username }}" />
             {% else %}
@@ -29,7 +29,7 @@
             {% endif %}
           </div>
           <div class="muted">
-            PNG, JPG, JPEG, GIF, and WebP images are center-cropped to a square. Transparent backgrounds stay transparent.
+            PNG, JPG, JPEG, GIF, and WebP images are center-cropped to a square. Transparent images float without a frame on your profile.
           </div>
         </div>
       </div>
@@ -40,6 +40,36 @@
           <div class="flash"><div class="err">{{ errors.avatar }}</div></div>
         {% endif %}
       </div>
+      <div class="field full">
+        <label>Current background picture</label>
+        <div class="profile-banner-preview">
+          {% if profile.display_banner_url %}
+            <img src="{{ profile.display_banner_url }}" alt="" />
+          {% else %}
+            <span>Automatic cover collage</span>
+          {% endif %}
+        </div>
+      </div>
+      <div class="field full">
+        <label for="banner">Upload background picture</label>
+        <input id="banner" type="file" name="banner" accept="image/png,image/jpeg,image/gif,image/webp" />
+        {% if errors.banner %}
+          <div class="flash"><div class="err">{{ errors.banner }}</div></div>
+        {% endif %}
+      </div>
+      <div class="field full">
+        <label for="banner_url">Background image URL</label>
+        <input id="banner_url" type="url" name="banner_url" value="{{ profile.banner_url }}" placeholder="https://example.com/banner.jpg" />
+        {% if errors.banner_url %}
+          <div class="flash"><div class="err">{{ errors.banner_url }}</div></div>
+        {% endif %}
+      </div>
+      {% if profile.display_banner_url %}
+        <label class="checkbox-row field full">
+          <input type="checkbox" name="clear_banner" value="1" />
+          <span>Remove custom background and use the automatic cover collage</span>
+        </label>
+      {% endif %}
       <div class="field full">
         <label for="bio">Bio</label>
         <textarea id="bio" name="bio" maxlength="500" placeholder="Short profile bio">{{ profile.bio }}</textarea>

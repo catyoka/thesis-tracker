@@ -2,12 +2,15 @@ from collections import Counter, defaultdict
 import json
 from difflib import SequenceMatcher
 from io import BytesIO
+from urllib.parse import urlencode
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.forms import UserCreationForm
 from django.contrib.auth import get_user_model
 from django.core.files.base import ContentFile
+from django.core.validators import URLValidator
+from django.core.exceptions import ValidationError
 from django.db.models import Avg, Count, Q
 from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.middleware.csrf import CsrfViewMiddleware
@@ -18,7 +21,8 @@ from django.views.decorators.http import require_http_methods
 from PIL import Image, UnidentifiedImageError
 
 from .anilist import fetch_media_catalog, fetch_media_details
-from .models import CatalogItem, Friendship, LibraryEntry, UserProfile
+from .models import CatalogItem, Friendship, LibraryEntry, MediaComment, UserProfile
+from .taxonomy import ANILIST_GENRES, ANILIST_TAGS, canonical_taxonomy_value
 
 
 CATALOG_CACHE_FIELDS = [
@@ -27,6 +31,7 @@ CATALOG_CACHE_FIELDS = [
     "description",
     "cover_image_url",
     "genres",
+    "tags",
     "average_score",
     "format",
     "release_status",
@@ -35,7 +40,54 @@ CATALOG_CACHE_FIELDS = [
     "volumes",
     "season_year",
     "site_url",
+    "trailer_site",
+    "trailer_id",
+    "trailer_thumbnail_url",
 ]
+
+MEDIA_DETAIL_TABS = (
+    ("overview", "Overview"),
+    ("watch", "Watch"),
+    ("characters", "Characters"),
+    ("staff", "Staff"),
+    ("reviews", "Reviews"),
+    ("stats", "Stats"),
+    ("social", "Social"),
+)
+MEDIA_DETAIL_TAB_KEYS = {key for key, _label in MEDIA_DETAIL_TABS}
+
+STATUS_LABELS = {
+    LibraryEntry.Status.PLANNED: {
+        "default": "Planning",
+        LibraryEntry.MediaType.ANIME: "Plan to watch",
+        LibraryEntry.MediaType.MANGA: "Plan to read",
+    },
+    LibraryEntry.Status.WATCHING: {
+        "default": "Watching / Reading",
+        LibraryEntry.MediaType.ANIME: "Watching",
+        LibraryEntry.MediaType.MANGA: "Reading",
+    },
+    LibraryEntry.Status.COMPLETED: {
+        "default": "Completed",
+        LibraryEntry.MediaType.ANIME: "Completed",
+        LibraryEntry.MediaType.MANGA: "Completed",
+    },
+    LibraryEntry.Status.REWATCHING: {
+        "default": "Rewatching / Rereading",
+        LibraryEntry.MediaType.ANIME: "Rewatching",
+        LibraryEntry.MediaType.MANGA: "Rereading",
+    },
+    LibraryEntry.Status.ON_HOLD: {
+        "default": "Paused",
+        LibraryEntry.MediaType.ANIME: "Paused",
+        LibraryEntry.MediaType.MANGA: "Paused",
+    },
+    LibraryEntry.Status.DROPPED: {
+        "default": "Dropped",
+        LibraryEntry.MediaType.ANIME: "Dropped",
+        LibraryEntry.MediaType.MANGA: "Dropped",
+    },
+}
 
 
 def _json_error(message: str, *, status: int, errors: dict | None = None) -> JsonResponse:
@@ -86,6 +138,7 @@ def _serialize_entry(entry: LibraryEntry) -> dict:
         "title": entry.title,
         "media_type": entry.media_type,
         "status": entry.status,
+        "status_label": _status_label(entry.status, entry.media_type),
         "progress": entry.progress,
         "rating": entry.rating,
         "notes": entry.notes,
@@ -93,6 +146,127 @@ def _serialize_entry(entry: LibraryEntry) -> dict:
         "created_at": entry.created_at.isoformat(),
         "updated_at": entry.updated_at.isoformat(),
     }
+
+
+def _status_label(status: str, media_type: str | None = None) -> str:
+    labels = STATUS_LABELS.get(status)
+    if not labels:
+        return str(status or "").replace("_", " ").title()
+    return labels.get(media_type) or labels["default"]
+
+
+def _status_choice_options(media_type: str | None = None) -> list[dict]:
+    return [
+        {
+            "value": value,
+            "label": _status_label(value, media_type),
+            "anime_label": _status_label(value, LibraryEntry.MediaType.ANIME),
+            "manga_label": _status_label(value, LibraryEntry.MediaType.MANGA),
+            "default_label": _status_label(value),
+        }
+        for value, _label in LibraryEntry.Status.choices
+    ]
+
+
+def _attach_status_labels(entries) -> None:
+    for entry in entries:
+        entry.status_label = _status_label(entry.status, entry.media_type)
+
+
+def _query_url(path: str, params: dict) -> str:
+    clean_params = {
+        key: value
+        for key, value in params.items()
+        if value not in {"", None, False}
+    }
+    if not clean_params:
+        return path
+    return f"{path}?{urlencode(clean_params)}"
+
+
+def _status_tabs(
+    base_qs,
+    active_status: str,
+    *,
+    base_path: str,
+    param_name: str = "status",
+    media_type: str | None = None,
+    extra_params: dict | None = None,
+) -> list[dict]:
+    extra_params = extra_params or {}
+    status_counts = {
+        row["status"]: row["count"]
+        for row in base_qs.values("status").annotate(count=Count("id"))
+    }
+    tabs = [
+        {
+            "value": "",
+            "label": "All",
+            "count": base_qs.count(),
+            "active": not active_status,
+            "url": _query_url(base_path, {**extra_params, param_name: ""}),
+        }
+    ]
+    for value, _label in LibraryEntry.Status.choices:
+        tabs.append(
+            {
+                "value": value,
+                "label": _status_label(value, media_type),
+                "count": status_counts.get(value, 0),
+                "active": active_status == value,
+                "url": _query_url(base_path, {**extra_params, param_name: value}),
+            }
+        )
+    return tabs
+
+
+def _entry_catalog_item(entry: LibraryEntry, catalog_lookup: dict[str, CatalogItem]) -> CatalogItem | None:
+    return entry.catalog_item or catalog_lookup.get(entry.external_id)
+
+
+def _entry_detail_url(entry: LibraryEntry, catalog_lookup: dict[str, CatalogItem]) -> str:
+    item = _entry_catalog_item(entry, catalog_lookup)
+    return _catalog_detail_url(item) if item else ""
+
+
+def _entry_rows(entries: list[LibraryEntry]) -> list[dict]:
+    _attach_status_labels(entries)
+    missing_catalog_ids = [
+        entry.external_id
+        for entry in entries
+        if entry.catalog_item_id is None
+    ]
+    catalog_lookup = CatalogItem.objects.in_bulk(missing_catalog_ids, field_name="external_id")
+    rows = []
+    for entry in entries:
+        item = _entry_catalog_item(entry, catalog_lookup)
+        rows.append(
+            {
+                "entry": entry,
+                "item": item,
+                "detail_url": _catalog_detail_url(item) if item else "",
+                "cover_image_url": item.cover_image_url if item else "",
+            }
+        )
+    return rows
+
+
+def _profile_banner_images(user, *, limit: int = 6) -> list[str]:
+    entries = (
+        LibraryEntry.objects.filter(user=user)
+        .select_related("catalog_item")
+        .exclude(catalog_item__cover_image_url="")
+        .order_by("-is_favorite", "-updated_at")[:limit]
+    )
+    images = []
+    seen = set()
+    for entry in entries:
+        item = entry.catalog_item
+        if item is None or not item.cover_image_url or item.cover_image_url in seen:
+            continue
+        seen.add(item.cover_image_url)
+        images.append(item.cover_image_url)
+    return images
 
 
 def _clean_positive_int(value) -> int | None:
@@ -113,21 +287,35 @@ def _clean_url(value) -> str:
     return str(value or "").strip()
 
 
-def _clean_genres(value) -> list[str]:
+def _clean_label_list(value, *, limit: int, max_length: int = 64) -> list[str]:
     if not isinstance(value, list):
         return []
 
-    genres = []
+    labels = []
     seen = set()
-    for genre in value:
-        if not isinstance(genre, str):
+    for item in value:
+        if isinstance(item, dict):
+            if item.get("isAdult"):
+                continue
+            raw_label = item.get("name")
+        else:
+            raw_label = item
+        if not isinstance(raw_label, str):
             continue
-        cleaned = genre.strip()
+        cleaned = raw_label.strip()
         if not cleaned or cleaned in seen:
             continue
-        genres.append(cleaned[:64])
+        labels.append(cleaned[:max_length])
         seen.add(cleaned)
-    return genres[:12]
+    return labels[:limit]
+
+
+def _clean_genres(value) -> list[str]:
+    return _clean_label_list(value, limit=12)
+
+
+def _clean_tags(value) -> list[str]:
+    return _clean_label_list(value, limit=40)
 
 
 def _best_media_title(title_data, fallback: str = "") -> str:
@@ -143,6 +331,7 @@ def _best_media_title(title_data, fallback: str = "") -> str:
 
 def _catalog_defaults_from_media_data(data: dict, media_type: str) -> dict:
     cover_data = data.get("coverImage") or {}
+    trailer_data = data.get("trailer") or {}
     raw_title = data.get("title")
     title_fallback = "" if isinstance(raw_title, dict) else str(raw_title or "")
     title = _best_media_title(raw_title, title_fallback)
@@ -156,6 +345,7 @@ def _catalog_defaults_from_media_data(data: dict, media_type: str) -> dict:
             or cover_data.get("medium")
         ),
         "genres": _clean_genres(data.get("genres")),
+        "tags": _clean_tags(data.get("tags")),
         "average_score": _clean_positive_int(data.get("average_score", data.get("averageScore"))),
         "format": _clean_token(data.get("format")),
         "release_status": _clean_token(data.get("release_status", data.get("status"))),
@@ -164,6 +354,11 @@ def _catalog_defaults_from_media_data(data: dict, media_type: str) -> dict:
         "volumes": _clean_positive_int(data.get("volumes")),
         "season_year": _clean_positive_int(data.get("season_year", data.get("seasonYear"))),
         "site_url": _clean_url(data.get("site_url") or data.get("siteUrl")),
+        "trailer_site": _clean_token(data.get("trailer_site") or trailer_data.get("site")),
+        "trailer_id": str(data.get("trailer_id") or trailer_data.get("id") or "").strip()[:128],
+        "trailer_thumbnail_url": _clean_url(
+            data.get("trailer_thumbnail_url") or trailer_data.get("thumbnail")
+        ),
     }
 
 
@@ -171,6 +366,22 @@ def _catalog_detail_url(item: CatalogItem) -> str:
     if item.media_type == CatalogItem.MediaType.MANGA:
         return reverse("tracker:manga_detail", args=[item.id])
     return reverse("tracker:anime_detail", args=[item.id])
+
+
+def _catalog_detail_tab_url(item: CatalogItem, tab: str) -> str:
+    return f"{_catalog_detail_url(item)}?tab={tab}"
+
+
+def _media_detail_tabs(item: CatalogItem, active_tab: str) -> list[dict]:
+    return [
+        {
+            "key": key,
+            "label": label,
+            "url": _catalog_detail_tab_url(item, key),
+            "active": key == active_tab,
+        }
+        for key, label in MEDIA_DETAIL_TABS
+    ]
 
 
 def _media_metadata_items(item: CatalogItem) -> list[dict]:
@@ -190,6 +401,108 @@ def _media_metadata_items(item: CatalogItem) -> list[dict]:
     if item.volumes:
         metadata.append({"label": "Volumes", "value": item.volumes})
     return metadata
+
+
+def _safe_youtube_trailer_id(item: CatalogItem) -> str:
+    if item.trailer_site.lower() != "youtube" or not item.trailer_id:
+        return ""
+    allowed_chars = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-")
+    if any(char not in allowed_chars for char in item.trailer_id):
+        return ""
+    return item.trailer_id
+
+
+def _youtube_trailer_watch_url(item: CatalogItem) -> str:
+    trailer_id = _safe_youtube_trailer_id(item)
+    if not trailer_id:
+        return ""
+    return f"https://www.youtube.com/watch?v={trailer_id}"
+
+
+def _anilist_person_name(node: dict) -> str:
+    name_data = (node or {}).get("name") or {}
+    return str(name_data.get("full") or "").strip()
+
+
+def _anilist_person_image(node: dict) -> str:
+    image_data = (node or {}).get("image") or {}
+    return _clean_url(image_data.get("large") or image_data.get("medium"))
+
+
+def _character_items_from_detail(detail_data: dict | None) -> list[dict]:
+    if not detail_data:
+        return []
+
+    edges = ((detail_data.get("characters") or {}).get("edges")) or []
+    characters = []
+    for edge in edges:
+        node = edge.get("node") or {}
+        name = _anilist_person_name(node)
+        if not name:
+            continue
+
+        voice_actor_names = [
+            _anilist_person_name(voice_actor)
+            for voice_actor in (edge.get("voiceActors") or [])
+            if _anilist_person_name(voice_actor)
+        ]
+        characters.append(
+            {
+                "name": name,
+                "role": str(edge.get("role") or "Character").replace("_", " ").title(),
+                "image_url": _anilist_person_image(node),
+                "voice_actors": voice_actor_names,
+            }
+        )
+    return characters
+
+
+def _staff_items_from_detail(detail_data: dict | None, *, limit: int = 36) -> list[dict]:
+    if not detail_data:
+        return []
+
+    staff_items = []
+    seen = set()
+
+    for edge in ((detail_data.get("staff") or {}).get("edges") or []):
+        node = edge.get("node") or {}
+        name = _anilist_person_name(node)
+        role = str(edge.get("role") or "Staff").strip()
+        key = (name.casefold(), role.casefold())
+        if not name or key in seen:
+            continue
+        seen.add(key)
+        staff_items.append(
+            {
+                "name": name,
+                "role": role,
+                "image_url": _anilist_person_image(node),
+            }
+        )
+        if len(staff_items) >= limit:
+            return staff_items
+
+    for edge in ((detail_data.get("characters") or {}).get("edges") or []):
+        character_node = edge.get("node") or {}
+        character_name = _anilist_person_name(character_node)
+        for voice_actor in (edge.get("voiceActors") or [])[:1]:
+            name = _anilist_person_name(voice_actor)
+            role = f"Voice Actor{f' as {character_name}' if character_name else ''}"
+            key = (name.casefold(), role.casefold())
+            if not name or key in seen:
+                continue
+            seen.add(key)
+            staff_items.append(
+                {
+                    "name": name,
+                    "role": role,
+                    "image_url": _anilist_person_image(voice_actor),
+                }
+            )
+            if len(staff_items) >= limit:
+                return staff_items
+
+    return staff_items
 
 
 def _rank_catalog_items_by_query(items: list[CatalogItem], query: str) -> list[CatalogItem]:
@@ -213,6 +526,44 @@ def _rank_catalog_items_by_query(items: list[CatalogItem], query: str) -> list[C
     return sorted(items, key=score)
 
 
+def _catalog_filter_value(value: str, options: tuple[str, ...]) -> str:
+    return canonical_taxonomy_value(value, options)
+
+
+def _catalog_item_matches_filters(item: CatalogItem, *, genre: str = "", tag: str = "") -> bool:
+    if genre and genre not in (item.genres or []):
+        return False
+    if tag and tag not in (item.tags or []):
+        return False
+    return True
+
+
+def _catalog_filter_url(
+    base_path: str,
+    *,
+    query: str = "",
+    genre: str = "",
+    tag: str = "",
+) -> str:
+    return _query_url(base_path, {"q": query, "genre": genre, "tag": tag})
+
+
+def _catalog_genre_links(base_path: str, *, query: str, active_genre: str, tag: str) -> list[dict]:
+    return [
+        {
+            "label": genre,
+            "active": genre == active_genre,
+            "url": _catalog_filter_url(
+                base_path,
+                query=query,
+                genre="" if genre == active_genre else genre,
+                tag=tag,
+            ),
+        }
+        for genre in ANILIST_GENRES
+    ]
+
+
 def _genre_preferences_for(user) -> Counter:
     preferences = Counter()
     entries = LibraryEntry.objects.filter(user=user).select_related("catalog_item")
@@ -229,7 +580,7 @@ def _genre_preferences_for(user) -> Counter:
             if entry.rating < 6:
                 continue
             weight += entry.rating - 5
-        if entry.status == LibraryEntry.Status.WATCHING:
+        if entry.status in {LibraryEntry.Status.WATCHING, LibraryEntry.Status.REWATCHING}:
             weight += 2
         elif entry.status == LibraryEntry.Status.COMPLETED:
             weight += 1
@@ -321,10 +672,6 @@ def _recommendations_for(user, *, limit: int = 6) -> tuple[list[dict], list[str]
     return recommendations, top_genres
 
 
-def _entry_catalog_item(entry: LibraryEntry, catalog_lookup: dict[str, CatalogItem]) -> CatalogItem | None:
-    return entry.catalog_item or catalog_lookup.get(entry.external_id)
-
-
 def _comparison_entry_row(
     entry: LibraryEntry,
     *,
@@ -337,10 +684,10 @@ def _comparison_entry_row(
     return {
         "title": entry.title,
         "media_type": entry.get_media_type_display(),
-        "status": entry.get_status_display(),
+        "status": _status_label(entry.status, entry.media_type),
         "rating": entry.rating,
         "is_favorite": entry.is_favorite,
-        "my_status": my_entry.get_status_display() if my_entry else "",
+        "my_status": _status_label(my_entry.status, my_entry.media_type) if my_entry else "",
         "my_rating": my_entry.rating if my_entry else None,
         "my_is_favorite": my_entry.is_favorite if my_entry else False,
         "detail_url": _catalog_detail_url(item) if item else "",
@@ -460,12 +807,19 @@ def _library_overview(user) -> dict:
         for row in user_entries.values("status").annotate(count=Count("id"))
     }
 
+    recent_entries = list(user_entries.order_by("-updated_at")[:5])
+    favorite_entries = list(user_entries.filter(is_favorite=True).order_by("-updated_at")[:5])
+    _attach_status_labels(recent_entries)
+    _attach_status_labels(favorite_entries)
+
     return {
         "total_count": total_count,
         "anime_count": anime_count,
         "manga_count": manga_count,
         "completed_count": user_entries.filter(status=LibraryEntry.Status.COMPLETED).count(),
-        "active_count": user_entries.filter(status=LibraryEntry.Status.WATCHING).count(),
+        "active_count": user_entries.filter(
+            status__in=[LibraryEntry.Status.WATCHING, LibraryEntry.Status.REWATCHING]
+        ).count(),
         "planned_count": user_entries.filter(status=LibraryEntry.Status.PLANNED).count(),
         "favorite_count": user_entries.filter(is_favorite=True).count(),
         "rated_count": user_entries.exclude(rating__isnull=True).count(),
@@ -473,14 +827,92 @@ def _library_overview(user) -> dict:
         "status_summary": [
             {
                 "value": value,
-                "label": label,
+                "label": _status_label(value),
                 "count": status_counts.get(value, 0),
                 "percent": round((status_counts.get(value, 0) / total_count) * 100) if total_count else 0,
             }
-            for value, label in LibraryEntry.Status.choices
+            for value, _label in LibraryEntry.Status.choices
         ],
-        "recent_entries": user_entries.order_by("-updated_at")[:5],
-        "favorite_entries": user_entries.filter(is_favorite=True).order_by("-updated_at")[:5],
+        "recent_entries": recent_entries,
+        "favorite_entries": favorite_entries,
+    }
+
+
+def _profile_list_context(request: HttpRequest, profile_user, *, limit: int = 80) -> dict:
+    active_status = (request.GET.get("list") or "").strip().upper()
+    valid_statuses = {value for value, _label in LibraryEntry.Status.choices}
+    if active_status not in valid_statuses:
+        active_status = ""
+
+    active_media_type = (request.GET.get("media") or "").strip().upper()
+    valid_media_types = {value for value, _label in LibraryEntry.MediaType.choices}
+    if active_media_type not in valid_media_types:
+        active_media_type = ""
+
+    favorite_filter = request.GET.get("favorite") == "1"
+    base_qs = LibraryEntry.objects.filter(user=profile_user).select_related("catalog_item")
+    tab_count_qs = base_qs
+    if active_media_type:
+        tab_count_qs = tab_count_qs.filter(media_type=active_media_type)
+    if favorite_filter:
+        tab_count_qs = tab_count_qs.filter(is_favorite=True)
+
+    qs = tab_count_qs
+    if active_status:
+        qs = qs.filter(status=active_status)
+    entries = list(qs.order_by("-updated_at")[:limit])
+
+    base_path = request.path
+    list_params = {
+        "media": active_media_type,
+        "favorite": "1" if favorite_filter else "",
+    }
+    if favorite_filter:
+        active_label = "Favorites"
+    elif active_media_type == LibraryEntry.MediaType.ANIME:
+        active_label = "Anime List"
+    elif active_media_type == LibraryEntry.MediaType.MANGA:
+        active_label = "Manga List"
+    elif active_status:
+        active_label = _status_label(active_status)
+    else:
+        active_label = "All"
+
+    return {
+        "profile_media_nav": [
+            {
+                "label": "Overview",
+                "url": _query_url(base_path, {}),
+                "active": not active_media_type and not favorite_filter,
+            },
+            {
+                "label": "Anime List",
+                "url": _query_url(base_path, {"media": LibraryEntry.MediaType.ANIME}),
+                "active": active_media_type == LibraryEntry.MediaType.ANIME and not favorite_filter,
+            },
+            {
+                "label": "Manga List",
+                "url": _query_url(base_path, {"media": LibraryEntry.MediaType.MANGA}),
+                "active": active_media_type == LibraryEntry.MediaType.MANGA and not favorite_filter,
+            },
+            {
+                "label": "Favorites",
+                "url": _query_url(base_path, {"favorite": "1"}),
+                "active": favorite_filter,
+            },
+        ],
+        "profile_list_tabs": _status_tabs(
+            tab_count_qs,
+            active_status,
+            base_path=base_path,
+            param_name="list",
+            media_type=active_media_type,
+            extra_params=list_params,
+        ),
+        "profile_list_rows": _entry_rows(entries),
+        "active_profile_list_label": active_label,
+        "profile_media_filter": active_media_type,
+        "profile_favorite_filter": favorite_filter,
     }
 
 
@@ -520,7 +952,17 @@ def _friends_for(user):
     ]
 
 
-def _square_avatar_upload(uploaded_file, username: str) -> ContentFile:
+def _safe_username_slug(username: str) -> str:
+    return "".join(ch for ch in username.lower() if ch.isalnum() or ch in {"-", "_"}) or "user"
+
+
+def _image_extension(image_format: str | None) -> str:
+    if image_format == "JPEG":
+        return "jpg"
+    return str(image_format or "png").lower()
+
+
+def _square_avatar_upload(uploaded_file, username: str) -> tuple[ContentFile, bool]:
     if uploaded_file.size > 5 * 1024 * 1024:
         raise ValueError("Avatar image must be 5 MB or smaller.")
 
@@ -547,14 +989,46 @@ def _square_avatar_upload(uploaded_file, username: str) -> ContentFile:
     image = image.resize((512, 512), Image.Resampling.LANCZOS)
 
     buffer = BytesIO()
-    safe_username = "".join(ch for ch in username.lower() if ch.isalnum() or ch in {"-", "_"}) or "user"
+    safe_username = _safe_username_slug(username)
     if has_transparency:
         image.save(buffer, format="PNG", optimize=True)
         extension = "png"
     else:
         image.save(buffer, format="JPEG", quality=88, optimize=True)
         extension = "jpg"
-    return ContentFile(buffer.getvalue(), name=f"{safe_username}_avatar.{extension}")
+    return ContentFile(buffer.getvalue(), name=f"{safe_username}_avatar.{extension}"), has_transparency
+
+
+def _profile_banner_upload(uploaded_file, username: str) -> ContentFile:
+    if uploaded_file.size > 8 * 1024 * 1024:
+        raise ValueError("Background image must be 8 MB or smaller.")
+
+    try:
+        image = Image.open(uploaded_file)
+        image.verify()
+    except (UnidentifiedImageError, OSError) as exc:
+        raise ValueError("Upload a valid background image.") from exc
+
+    if image.format not in {"JPEG", "PNG", "GIF", "WEBP"}:
+        raise ValueError("Background must be a PNG, JPG, JPEG, GIF, or WebP image.")
+
+    uploaded_file.seek(0)
+    safe_username = _safe_username_slug(username)
+    extension = _image_extension(image.format)
+    return ContentFile(uploaded_file.read(), name=f"{safe_username}_banner.{extension}")
+
+
+def _clean_profile_url(value: str, *, field_label: str) -> str:
+    cleaned = value.strip()
+    if not cleaned:
+        return ""
+    if len(cleaned) > 200:
+        raise ValueError(f"{field_label} URL must be 200 characters or fewer.")
+    try:
+        URLValidator()(cleaned)
+    except ValidationError as exc:
+        raise ValueError(f"Enter a valid {field_label.lower()} URL.") from exc
+    return cleaned
 
 
 def home_page(request: HttpRequest) -> HttpResponse:
@@ -589,8 +1063,10 @@ def profile_page(request: HttpRequest) -> HttpResponse:
         "tracker/profile.html",
         {
             **overview,
+            **_profile_list_context(request, request.user),
             "profile_user": request.user,
             "profile": profile,
+            "profile_banner_images": _profile_banner_images(request.user),
             "friends": friends[:6],
             "friend_count": len(friends),
             "incoming_requests": incoming_requests,
@@ -606,16 +1082,27 @@ def profile_edit_page(request: HttpRequest) -> HttpResponse:
 
     if request.method == "POST":
         bio = (request.POST.get("bio") or "").strip()
+        banner_url = (request.POST.get("banner_url") or "").strip()
+        clear_banner = request.POST.get("clear_banner") == "1"
         avatar_file = request.FILES.get("avatar")
+        banner_file = request.FILES.get("banner")
 
         if len(bio) > 500:
             errors["bio"] = "Bio must be 500 characters or fewer."
+        try:
+            banner_url = _clean_profile_url(banner_url, field_label="Background image")
+        except ValueError as exc:
+            errors["banner_url"] = str(exc)
 
         if not errors:
             profile.bio = bio
+            save_fields = ["bio", "updated_at"]
             if avatar_file:
                 try:
-                    avatar_content = _square_avatar_upload(avatar_file, request.user.username)
+                    avatar_content, avatar_has_transparency = _square_avatar_upload(
+                        avatar_file,
+                        request.user.username,
+                    )
                 except ValueError as exc:
                     errors["avatar"] = str(exc)
                 else:
@@ -623,8 +1110,31 @@ def profile_edit_page(request: HttpRequest) -> HttpResponse:
                         profile.avatar.delete(save=False)
                     profile.avatar.save(avatar_content.name, avatar_content, save=False)
                     profile.avatar_url = ""
+                    profile.avatar_has_transparency = avatar_has_transparency
+                    save_fields.extend(["avatar", "avatar_url", "avatar_has_transparency"])
+            if banner_file and not errors:
+                try:
+                    banner_content = _profile_banner_upload(banner_file, request.user.username)
+                except ValueError as exc:
+                    errors["banner"] = str(exc)
+                else:
+                    if profile.banner:
+                        profile.banner.delete(save=False)
+                    profile.banner.save(banner_content.name, banner_content, save=False)
+                    profile.banner_url = ""
+                    save_fields.extend(["banner", "banner_url"])
+            elif banner_url:
+                if profile.banner:
+                    profile.banner.delete(save=False)
+                profile.banner_url = banner_url
+                save_fields.extend(["banner", "banner_url"])
+            elif clear_banner:
+                if profile.banner:
+                    profile.banner.delete(save=False)
+                profile.banner_url = ""
+                save_fields.extend(["banner", "banner_url"])
             if not errors:
-                profile.save(update_fields=["avatar", "avatar_url", "bio", "updated_at"])
+                profile.save(update_fields=sorted(set(save_fields)))
                 messages.success(request, "Profile updated.")
                 return redirect("tracker:profile")
 
@@ -681,8 +1191,10 @@ def public_profile_page(request: HttpRequest, username: str) -> HttpResponse:
         "tracker/public_profile.html",
         {
             **overview,
+            **_profile_list_context(request, profile_user),
             "profile_user": profile_user,
             "profile": profile,
+            "profile_banner_images": _profile_banner_images(profile_user),
             "comparison": comparison,
             **friendship,
         },
@@ -781,41 +1293,60 @@ def signup_page(request: HttpRequest) -> HttpResponse:
 @login_required
 def library_page(request: HttpRequest) -> HttpResponse:
     base_qs = LibraryEntry.objects.filter(user=request.user)
-    qs = base_qs
-
     status = request.GET.get("status") or ""
     media_type = request.GET.get("media_type") or ""
     favorite_filter = request.GET.get("favorite") == "1"
+    valid_statuses = {value for value, _label in LibraryEntry.Status.choices}
+    valid_media_types = {value for value, _label in LibraryEntry.MediaType.choices}
+    if status not in valid_statuses:
+        status = ""
+    if media_type not in valid_media_types:
+        media_type = ""
+
+    qs = base_qs
+    tab_count_qs = base_qs
+    if media_type:
+        tab_count_qs = tab_count_qs.filter(media_type=media_type)
+    if favorite_filter:
+        tab_count_qs = tab_count_qs.filter(is_favorite=True)
+
     if status:
         qs = qs.filter(status=status)
     if media_type:
         qs = qs.filter(media_type=media_type)
     if favorite_filter:
         qs = qs.filter(is_favorite=True)
-
-    status_counts = {
-        row["status"]: row["count"]
-        for row in base_qs.values("status").annotate(count=Count("id"))
-    }
-    status_tabs = [
-        {"value": "", "label": "All", "count": base_qs.count()},
-        *[
-            {"value": value, "label": label, "count": status_counts.get(value, 0)}
-            for value, label in LibraryEntry.Status.choices
-        ],
-    ]
+    entries = list(qs.order_by("-updated_at"))
+    _attach_status_labels(entries)
 
     return render(
         request,
         "tracker/library.html",
         {
-            "entries": qs.order_by("-updated_at"),
+            "entries": entries,
             "status_filter": status,
             "media_type_filter": media_type,
             "favorite_filter": favorite_filter,
             "favorite_count": base_qs.filter(is_favorite=True).count(),
-            "status_tabs": status_tabs,
-            "status_choices": LibraryEntry.Status.choices,
+            "favorite_url": _query_url(
+                request.path,
+                {
+                    "status": status,
+                    "media_type": media_type,
+                    "favorite": "" if favorite_filter else "1",
+                },
+            ),
+            "status_tabs": _status_tabs(
+                tab_count_qs,
+                status,
+                base_path=request.path,
+                media_type=media_type,
+                extra_params={
+                    "media_type": media_type,
+                    "favorite": "1" if favorite_filter else "",
+                },
+            ),
+            "status_choices": _status_choice_options(),
             "media_type_choices": LibraryEntry.MediaType.choices,
         },
     )
@@ -828,15 +1359,22 @@ def media_catalog_page(request: HttpRequest, media_type: str) -> HttpResponse:
         return redirect("tracker:anime_catalog")
 
     query = (request.GET.get("q") or "").strip()
+    active_genre = _catalog_filter_value(request.GET.get("genre") or "", ANILIST_GENRES)
+    active_tag = _catalog_filter_value(request.GET.get("tag") or "", ANILIST_TAGS)
     source_note = "Showing Top 50 popular titles from AniList."
     source_error = ""
     preferred_external_ids: list[str] = []
+    base_path = reverse(
+        "tracker:manga_catalog" if normalized_type == CatalogItem.MediaType.MANGA else "tracker:anime_catalog"
+    )
 
     try:
         remote_items = fetch_media_catalog(
             normalized_type,
             query,
             per_page=50,
+            genre=active_genre,
+            tag=active_tag,
         )
         preferred_external_ids = [data["external_id"] for data in remote_items]
         for data in remote_items:
@@ -847,12 +1385,18 @@ def media_catalog_page(request: HttpRequest, media_type: str) -> HttpResponse:
             )
         if query:
             source_note = "Showing AniList search results (up to 50), cached locally."
+        if active_genre or active_tag:
+            filters = ", ".join(label for label in [active_genre, active_tag] if label)
+            source_note = f"Showing AniList results filtered by {filters}, cached locally."
     except RuntimeError:
         source_error = "AniList API is unavailable right now, showing cached data only."
         if query:
             source_note = "Showing locally cached search results."
         else:
             source_note = "Showing locally cached popular list."
+        if active_genre or active_tag:
+            filters = ", ".join(label for label in [active_genre, active_tag] if label)
+            source_note = f"Showing locally cached results filtered by {filters}."
 
     catalog_qs = CatalogItem.objects.filter(media_type=normalized_type)
     if query:
@@ -862,11 +1406,20 @@ def media_catalog_page(request: HttpRequest, media_type: str) -> HttpResponse:
         position = {external_id: idx for idx, external_id in enumerate(preferred_external_ids)}
         catalog_items.sort(key=lambda item: position.get(item.external_id, 10**9))
     else:
-        catalog_items = list(catalog_qs.order_by("title")[:100])
+        catalog_items = list(catalog_qs.order_by("title")[:300])
         if query:
             catalog_items = _rank_catalog_items_by_query(catalog_items, query)[:50]
         else:
-            catalog_items = catalog_items[:50]
+            catalog_items = catalog_items[:100]
+
+    if active_genre or active_tag:
+        catalog_items = [
+            item
+            for item in catalog_items
+            if _catalog_item_matches_filters(item, genre=active_genre, tag=active_tag)
+        ][:50]
+    elif not preferred_external_ids:
+        catalog_items = catalog_items[:50]
 
     user_entries = LibraryEntry.objects.filter(
         user=request.user,
@@ -881,6 +1434,10 @@ def media_catalog_page(request: HttpRequest, media_type: str) -> HttpResponse:
         {
             "item": item,
             "user_status": user_status_by_external_id.get(item.external_id),
+            "user_status_label": _status_label(
+                user_status_by_external_id.get(item.external_id),
+                item.media_type,
+            ) if user_status_by_external_id.get(item.external_id) else "",
         }
         for item in catalog_items
     ]
@@ -890,9 +1447,21 @@ def media_catalog_page(request: HttpRequest, media_type: str) -> HttpResponse:
         "tracker/catalog.html",
         {
             "item_rows": item_rows,
-            "status_choices": LibraryEntry.Status.choices,
+            "status_choices": _status_choice_options(normalized_type),
             "selected_media_type": normalized_type,
             "query": query,
+            "genre_options": ANILIST_GENRES,
+            "tag_options": ANILIST_TAGS,
+            "genre_links": _catalog_genre_links(
+                base_path,
+                query=query,
+                active_genre=active_genre,
+                tag=active_tag,
+            ),
+            "selected_genre": active_genre,
+            "selected_tag": active_tag,
+            "active_filter_count": len([value for value in (active_genre, active_tag) if value]),
+            "clear_filters_url": base_path,
             "source_note": source_note,
             "source_error": source_error,
         },
@@ -933,6 +1502,13 @@ def media_detail_page(request: HttpRequest, media_type: str, item_id: int) -> Ht
 
     user_entry = LibraryEntry.objects.filter(user=request.user, external_id=item.external_id).first()
     metadata_items = _media_metadata_items(item)
+    trailer_watch_url = _youtube_trailer_watch_url(item)
+    character_items = _character_items_from_detail(detail_data)
+    staff_items = _staff_items_from_detail(detail_data)
+    comments = item.comments.select_related("user").order_by("-created_at")[:30]
+    active_tab = (request.GET.get("tab") or "overview").strip().lower()
+    if active_tab not in MEDIA_DETAIL_TAB_KEYS:
+        active_tab = "overview"
     return render(
         request,
         "tracker/media_detail.html",
@@ -941,10 +1517,52 @@ def media_detail_page(request: HttpRequest, media_type: str, item_id: int) -> Ht
             "detail_data": detail_data,
             "detail_error": detail_error,
             "metadata_items": metadata_items,
+            "trailer_watch_url": trailer_watch_url,
+            "character_items": character_items,
+            "staff_items": staff_items,
+            "comments": comments,
+            "active_tab": active_tab,
+            "detail_tabs": _media_detail_tabs(item, active_tab),
             "user_entry": user_entry,
-            "status_choices": LibraryEntry.Status.choices,
+            "user_entry_status_label": _status_label(
+                user_entry.status,
+                user_entry.media_type,
+            ) if user_entry else "",
+            "status_choices": _status_choice_options(item.media_type),
         },
     )
+
+
+@login_required
+@require_http_methods(["POST"])
+def media_comment_action(request: HttpRequest, item_id: int) -> HttpResponse:
+    item = get_object_or_404(CatalogItem, id=item_id)
+    action = request.POST.get("action") or "create"
+
+    if action == "delete":
+        comment_id = request.POST.get("comment_id")
+        deleted, _rows = MediaComment.objects.filter(
+            id=comment_id,
+            catalog_item=item,
+            user=request.user,
+        ).delete()
+        if deleted:
+            messages.info(request, "Comment deleted.")
+        else:
+            messages.error(request, "Comment could not be deleted.")
+        return redirect(f"{_catalog_detail_tab_url(item, 'social')}#social")
+
+    body = (request.POST.get("body") or "").strip()
+    if not body:
+        messages.error(request, "Write a comment before posting.")
+        return redirect(f"{_catalog_detail_tab_url(item, 'social')}#social")
+    if len(body) > 500:
+        messages.error(request, "Comments must be 500 characters or fewer.")
+        return redirect(f"{_catalog_detail_tab_url(item, 'social')}#social")
+
+    MediaComment.objects.create(catalog_item=item, user=request.user, body=body)
+    messages.success(request, "Comment posted.")
+    return redirect(f"{_catalog_detail_tab_url(item, 'social')}#social")
 
 
 @login_required

@@ -40,7 +40,7 @@
       <strong>{{ completed_count }}</strong>
     </div>
     <div class="metric-chip">
-      <div class="stat-label">Watching / reading</div>
+      <div class="stat-label">Current / repeating</div>
       <strong>{{ active_count }}</strong>
     </div>
     <div class="metric-chip">
@@ -117,7 +117,7 @@
                   {% endif %}
                 </td>
                 <td>{{ entry.get_media_type_display }}</td>
-                <td><span class="pill">{{ entry.status }}</span></td>
+                <td><span class="pill">{{ entry.status_label }}</span></td>
                 <td>{% if entry.rating %}{{ entry.rating }}/10{% else %}<span class="muted">-</span>{% endif %}</td>
                 <td>{{ entry.updated_at|date:"Y-m-d H:i" }}</td>
               </tr>

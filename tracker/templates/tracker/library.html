@@ -34,18 +34,12 @@
 
   <nav class="tabs" aria-label="Library status filters">
     {% for tab in status_tabs %}
-      <a
-        class="tab {% if status_filter == tab.value %}active{% endif %}"
-        href="{% url 'tracker:library' %}?{% if tab.value %}status={{ tab.value }}{% endif %}{% if media_type_filter %}{% if tab.value %}&{% endif %}media_type={{ media_type_filter }}{% endif %}{% if favorite_filter %}{% if tab.value or media_type_filter %}&{% endif %}favorite=1{% endif %}"
-      >
+      <a class="tab {% if tab.active %}active{% endif %}" href="{{ tab.url }}">
         <span>{{ tab.label }}</span>
         <span class="tab-count">{{ tab.count }}</span>
       </a>
     {% endfor %}
-    <a
-      class="tab {% if favorite_filter %}active{% endif %}"
-      href="{% url 'tracker:library' %}?{% if status_filter %}status={{ status_filter }}{% if media_type_filter %}&{% endif %}{% endif %}{% if media_type_filter %}media_type={{ media_type_filter }}{% endif %}{% if not favorite_filter %}{% if status_filter or media_type_filter %}&{% endif %}favorite=1{% endif %}"
-    >
+    <a class="tab {% if favorite_filter %}active{% endif %}" href="{{ favorite_url }}">
       <span>Favorites</span>
       <span class="tab-count">{{ favorite_count }}</span>
     </a>
@@ -77,8 +71,14 @@
       <div class="field">
         <label for="add_status">Status</label>
         <select id="add_status" name="status" required>
-          {% for value,label in status_choices %}
-            <option value="{{ value }}" {% if value == "PLANNED" %}selected{% endif %}>{{ label }}</option>
+          {% for option in status_choices %}
+            <option
+              value="{{ option.value }}"
+              data-anime-label="{{ option.anime_label }}"
+              data-manga-label="{{ option.manga_label }}"
+              data-default-label="{{ option.default_label }}"
+              {% if option.value == "PLANNED" %}selected{% endif %}
+            >{{ option.default_label }}</option>
           {% endfor %}
         </select>
       </div>
@@ -124,7 +124,7 @@
                 {% endif %}
               </td>
               <td>{{ e.get_media_type_display }}</td>
-              <td><span class="pill">{{ e.status }}</span></td>
+              <td><span class="pill">{{ e.status_label }}</span></td>
               <td style="white-space: nowrap;">
                 <span class="js-progress">{{ e.progress }}</span>
                 <span class="actions" style="display: inline-flex; margin-left: 8px;">
@@ -159,8 +159,8 @@
                   <div class="field" style="min-width: 220px;">
                     <label>Status</label>
                     <select class="js-edit-status">
-                      {% for value,label in status_choices %}
-                        <option value="{{ value }}">{{ label }}</option>
+                      {% for option in status_choices %}
+                        <option value="{{ option.value }}">{{ option.default_label }}</option>
                       {% endfor %}
                     </select>
                   </div>
@@ -252,6 +252,18 @@
         setFlash(flash, "err", e.message, extra);
       }
     });
+
+    function syncAddStatusLabels() {
+      const mediaType = document.getElementById("add_media_type").value;
+      document.querySelectorAll("#add_status option").forEach((option) => {
+        option.textContent = mediaType === "MANGA"
+          ? option.dataset.mangaLabel
+          : option.dataset.animeLabel;
+      });
+    }
+
+    document.getElementById("add_media_type").addEventListener("change", syncAddStatusLabels);
+    syncAddStatusLabels();
 
     document.querySelectorAll(".js-favorite").forEach((btn) => {
       btn.addEventListener("click", async (ev) => {

@@ -13,6 +13,7 @@ class CatalogItem(models.Model):
     description = models.TextField(blank=True)
     cover_image_url = models.URLField(blank=True)
     genres = models.JSONField(default=list, blank=True)
+    tags = models.JSONField(default=list, blank=True)
     average_score = models.PositiveSmallIntegerField(null=True, blank=True)
     format = models.CharField(max_length=64, blank=True)
     release_status = models.CharField(max_length=64, blank=True)
@@ -21,6 +22,9 @@ class CatalogItem(models.Model):
     volumes = models.PositiveIntegerField(null=True, blank=True)
     season_year = models.PositiveIntegerField(null=True, blank=True)
     site_url = models.URLField(blank=True)
+    trailer_site = models.CharField(max_length=64, blank=True)
+    trailer_id = models.CharField(max_length=128, blank=True)
+    trailer_thumbnail_url = models.URLField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -49,6 +53,9 @@ class UserProfile(models.Model):
     )
     avatar = models.ImageField(upload_to="avatars/", blank=True)
     avatar_url = models.URLField(blank=True)
+    avatar_has_transparency = models.BooleanField(default=False)
+    banner = models.ImageField(upload_to="profile_banners/", blank=True)
+    banner_url = models.URLField(blank=True)
     bio = models.TextField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -58,6 +65,19 @@ class UserProfile(models.Model):
         if self.avatar:
             return self.avatar.url
         return self.avatar_url
+
+    @property
+    def display_banner_url(self) -> str:
+        if self.banner:
+            return self.banner.url
+        return self.banner_url
+
+    @property
+    def avatar_should_float(self) -> bool:
+        if self.avatar_has_transparency:
+            return True
+        avatar_url = self.display_avatar_url.lower()
+        return avatar_url.endswith((".png", ".gif", ".webp"))
 
     def __str__(self) -> str:
         return f"{self.user} profile"
@@ -106,7 +126,8 @@ class LibraryEntry(models.Model):
         PLANNED = "PLANNED", "Planned"
         WATCHING = "WATCHING", "Watching/Reading"
         COMPLETED = "COMPLETED", "Completed"
-        ON_HOLD = "ON_HOLD", "On hold"
+        REWATCHING = "REWATCHING", "Rewatching/Rereading"
+        ON_HOLD = "ON_HOLD", "Paused"
         DROPPED = "DROPPED", "Dropped"
 
     user = models.ForeignKey(
@@ -146,3 +167,28 @@ class LibraryEntry(models.Model):
 
     def __str__(self) -> str:
         return f"{self.user} - {self.title} ({self.media_type})"
+
+
+class MediaComment(models.Model):
+    catalog_item = models.ForeignKey(
+        CatalogItem,
+        on_delete=models.CASCADE,
+        related_name="comments",
+    )
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="media_comments",
+    )
+    body = models.TextField()
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["catalog_item", "-created_at"], name="idx_comment_item_created"),
+        ]
+        ordering = ["-created_at"]
+
+    def __str__(self) -> str:
+        return f"{self.user} on {self.catalog_item}"

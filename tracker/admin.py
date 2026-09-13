@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import CatalogItem, Friendship, LibraryEntry, UserProfile
+from .models import CatalogItem, Friendship, LibraryEntry, MediaComment, UserProfile
 
 
 @admin.register(LibraryEntry)
@@ -41,3 +41,11 @@ class FriendshipAdmin(admin.ModelAdmin):
     list_filter = ("status", "updated_at")
     search_fields = ("requester__username", "addressee__username")
     ordering = ("-updated_at",)
+
+
+@admin.register(MediaComment)
+class MediaCommentAdmin(admin.ModelAdmin):
+    list_display = ("id", "catalog_item", "user", "created_at")
+    list_filter = ("created_at",)
+    search_fields = ("body", "catalog_item__title", "user__username")
+    ordering = ("-created_at",)
