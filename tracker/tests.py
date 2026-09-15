@@ -300,32 +300,99 @@ class LibraryPageTests(TestCase):
             CatalogItem.MediaType.ANIME,
             "",
             per_page=50,
-            genre="Action",
-            tag="Female Protagonist",
+            genres=["Action"],
+            tags=["Female Protagonist"],
         )
         self.assertContains(response, "Filtered Action Title")
         self.assertContains(response, "Female Protagonist")
+
+    def test_catalog_filters_can_use_multiple_genres_and_tags(self):
+        with patch("tracker.views.fetch_media_catalog") as fetch_media_catalog:
+            fetch_media_catalog.return_value = [
+                {
+                    "external_id": "anilist:53",
+                    "title": "Multi Filtered Title",
+                    "media_type": CatalogItem.MediaType.ANIME,
+                    "description": "Filtered by multiple AniList fields.",
+                    "cover_image_url": "",
+                    "genres": ["Action", "Drama"],
+                    "tags": ["Female Protagonist", "Swordplay"],
+                    "average_score": 88,
+                    "format": "TV",
+                    "release_status": "FINISHED",
+                    "episodes": 12,
+                    "chapters": None,
+                    "volumes": None,
+                    "season_year": 2024,
+                    "site_url": "",
+                    "trailer_site": "",
+                    "trailer_id": "",
+                    "trailer_thumbnail_url": "",
+                },
+                {
+                    "external_id": "anilist:54",
+                    "title": "Partial Filtered Title",
+                    "media_type": CatalogItem.MediaType.ANIME,
+                    "description": "Missing one selected tag.",
+                    "cover_image_url": "",
+                    "genres": ["Action", "Drama"],
+                    "tags": ["Female Protagonist"],
+                    "average_score": 91,
+                    "format": "TV",
+                    "release_status": "FINISHED",
+                    "episodes": 12,
+                    "chapters": None,
+                    "volumes": None,
+                    "season_year": 2024,
+                    "site_url": "",
+                    "trailer_site": "",
+                    "trailer_id": "",
+                    "trailer_thumbnail_url": "",
+                },
+            ]
+
+            response = self.client.get(
+                reverse("tracker:anime_catalog"),
+                {
+                    "genre": ["action", "drama"],
+                    "tag": ["female protagonist", "swordplay"],
+                },
+            )
+
+        fetch_media_catalog.assert_called_once_with(
+            CatalogItem.MediaType.ANIME,
+            "",
+            per_page=50,
+            genres=["Action", "Drama"],
+            tags=["Female Protagonist", "Swordplay"],
+        )
+        self.assertContains(response, "Multi Filtered Title")
+        self.assertNotContains(response, "Partial Filtered Title")
+        self.assertContains(response, "Category: Action")
+        self.assertContains(response, "Category: Drama")
+        self.assertContains(response, "Tag: Female Protagonist")
+        self.assertContains(response, "Tag: Swordplay")
 
     def test_catalog_filters_cached_items_when_anilist_is_unavailable(self):
         CatalogItem.objects.create(
             external_id="anilist:51",
             title="Cached Match",
             media_type=CatalogItem.MediaType.ANIME,
-            genres=["Action"],
-            tags=["Magic"],
+            genres=["Action", "Drama"],
+            tags=["Magic", "Swordplay"],
         )
         CatalogItem.objects.create(
             external_id="anilist:52",
             title="Cached Miss",
             media_type=CatalogItem.MediaType.ANIME,
-            genres=["Romance"],
+            genres=["Action", "Drama"],
             tags=["Magic"],
         )
 
         with patch("tracker.views.fetch_media_catalog", side_effect=RuntimeError):
             response = self.client.get(
                 reverse("tracker:anime_catalog"),
-                {"genre": "Action", "tag": "Magic"},
+                {"genre": ["Action", "Drama"], "tag": ["Magic", "Swordplay"]},
             )
 
         self.assertContains(response, "Cached Match")
@@ -478,6 +545,59 @@ class LibraryPageTests(TestCase):
         self.assertEqual(item.season_year, 2025)
         self.assertEqual(item.trailer_site, "youtube")
         self.assertEqual(item.trailer_id, "detailTrailer_1")
+
+    def test_media_detail_shows_more_like_this_recommendations(self):
+        item = CatalogItem.objects.create(
+            external_id="local:300",
+            title="Current Title",
+            media_type=CatalogItem.MediaType.ANIME,
+            genres=["Drama", "Fantasy"],
+            tags=["Found Family", "Magic"],
+            average_score=85,
+            format="TV",
+        )
+        CatalogItem.objects.create(
+            external_id="local:301",
+            title="Similar Pick",
+            media_type=CatalogItem.MediaType.ANIME,
+            genres=["Drama"],
+            tags=["Magic"],
+            average_score=90,
+            format="TV",
+        )
+        CatalogItem.objects.create(
+            external_id="local:302",
+            title="Different Type Pick",
+            media_type=CatalogItem.MediaType.MANGA,
+            genres=["Drama"],
+            tags=["Magic"],
+            average_score=95,
+        )
+        listed = CatalogItem.objects.create(
+            external_id="local:303",
+            title="Already Listed Pick",
+            media_type=CatalogItem.MediaType.ANIME,
+            genres=["Fantasy"],
+            tags=["Found Family"],
+            average_score=91,
+        )
+        LibraryEntry.objects.create(
+            user=self.user,
+            catalog_item=listed,
+            external_id=listed.external_id,
+            title=listed.title,
+            media_type=LibraryEntry.MediaType.ANIME,
+            status=LibraryEntry.Status.WATCHING,
+        )
+
+        response = self.client.get(reverse("tracker:anime_detail", args=[item.id]))
+
+        self.assertContains(response, "More like this")
+        self.assertContains(response, "Similar Pick")
+        self.assertContains(response, "Shares Drama")
+        self.assertContains(response, "Similar tags: Magic")
+        self.assertNotContains(response, "Different Type Pick")
+        self.assertNotContains(response, "Already Listed Pick")
 
     def test_media_detail_allows_item_comments(self):
         item = CatalogItem.objects.create(

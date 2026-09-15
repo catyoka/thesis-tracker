@@ -29,14 +29,17 @@
 
   <section class="catalog-browse-shell">
     <aside class="catalog-filter-panel">
-      <form method="get" class="catalog-filter-form">
+      <form method="get" class="catalog-filter-form" data-multi-filter-form>
         <div>
           <label for="q">Search title</label>
           <input id="q" type="search" name="q" value="{{ query }}" placeholder="Search by title" />
         </div>
         <div>
-          <label for="genre">Category</label>
-          <input id="genre" type="search" name="genre" value="{{ selected_genre }}" list="genre-options" placeholder="Any category" autocomplete="off" />
+          <label for="genre">Add category</label>
+          <div class="catalog-filter-add-row">
+            <input id="genre" type="search" name="genre" list="genre-options" placeholder="Action, Drama..." autocomplete="off" data-filter-input="genre" />
+            <button type="button" data-add-filter="genre">Add</button>
+          </div>
           <datalist id="genre-options">
             {% for genre in genre_options %}
               <option value="{{ genre }}"></option>
@@ -44,13 +47,32 @@
           </datalist>
         </div>
         <div>
-          <label for="tag">Tag</label>
-          <input id="tag" type="search" name="tag" value="{{ selected_tag }}" list="tag-options" placeholder="Search AniList tags" autocomplete="off" />
+          <label for="tag">Add tag</label>
+          <div class="catalog-filter-add-row">
+            <input id="tag" type="search" name="tag" list="tag-options" placeholder="Magic, Isekai..." autocomplete="off" data-filter-input="tag" />
+            <button type="button" data-add-filter="tag">Add</button>
+          </div>
           <datalist id="tag-options">
             {% for tag in tag_options %}
               <option value="{{ tag }}"></option>
             {% endfor %}
           </datalist>
+        </div>
+        <div class="catalog-selected-filters" data-selected-filters>
+          {% for genre in selected_genres %}
+            <span class="pill catalog-selected-filter" data-filter-chip="genre" data-filter-value="{{ genre }}">
+              Category: {{ genre }}
+              <button type="button" aria-label="Remove {{ genre }}" data-remove-filter>&times;</button>
+              <input type="hidden" name="genre" value="{{ genre }}" />
+            </span>
+          {% endfor %}
+          {% for tag in selected_tags %}
+            <span class="pill catalog-selected-filter" data-filter-chip="tag" data-filter-value="{{ tag }}">
+              Tag: {{ tag }}
+              <button type="button" aria-label="Remove {{ tag }}" data-remove-filter>&times;</button>
+              <input type="hidden" name="tag" value="{{ tag }}" />
+            </span>
+          {% endfor %}
         </div>
         <div class="catalog-filter-actions">
           <button class="primary" type="submit">Apply</button>
@@ -76,12 +98,9 @@
         </div>
         {% if active_filter_count %}
           <div class="genre-list" style="margin-top: 0;">
-            {% if selected_genre %}
-              <span class="pill">{{ selected_genre }}</span>
-            {% endif %}
-            {% if selected_tag %}
-              <span class="pill">{{ selected_tag }}</span>
-            {% endif %}
+            {% for chip in active_filter_chips %}
+              <a class="pill catalog-result-filter-chip" href="{{ chip.url }}" title="Remove {{ chip.label }}">{{ chip.kind }}: {{ chip.label }} &times;</a>
+            {% endfor %}
           </div>
         {% endif %}
       </div>
@@ -164,4 +183,74 @@
       </div>
     </div>
   </section>
+
+  <script>
+    (() => {
+      const form = document.querySelector("[data-multi-filter-form]");
+      if (!form) return;
+
+      const selectedList = form.querySelector("[data-selected-filters]");
+      const escapeSelector = window.CSS && CSS.escape ? CSS.escape : (value) => value.replace(/"/g, '\\"');
+
+      const removeChip = (button) => {
+        const chip = button.closest("[data-filter-chip]");
+        if (chip) chip.remove();
+      };
+
+      const addFilter = (kind) => {
+        const input = form.querySelector(`[data-filter-input="${kind}"]`);
+        const value = input.value.trim();
+        if (!value) return;
+
+        const existing = selectedList.querySelector(`[data-filter-chip="${kind}"][data-filter-value="${escapeSelector(value)}"]`);
+        if (existing) {
+          input.value = "";
+          return;
+        }
+
+        const chip = document.createElement("span");
+        chip.className = "pill catalog-selected-filter";
+        chip.dataset.filterChip = kind;
+        chip.dataset.filterValue = value;
+        chip.append(`${kind === "genre" ? "Category" : "Tag"}: ${value} `);
+
+        const removeButton = document.createElement("button");
+        removeButton.type = "button";
+        removeButton.setAttribute("aria-label", `Remove ${value}`);
+        removeButton.dataset.removeFilter = "";
+        removeButton.textContent = "x";
+        chip.append(removeButton);
+
+        const hiddenInput = document.createElement("input");
+        hiddenInput.type = "hidden";
+        hiddenInput.name = kind;
+        hiddenInput.value = value;
+        chip.append(hiddenInput);
+
+        selectedList.append(chip);
+        input.value = "";
+      };
+
+      form.addEventListener("click", (event) => {
+        const addButton = event.target.closest("[data-add-filter]");
+        if (addButton) {
+          addFilter(addButton.dataset.addFilter);
+          return;
+        }
+
+        const removeButton = event.target.closest("[data-remove-filter]");
+        if (removeButton) {
+          removeChip(removeButton);
+        }
+      });
+
+      form.addEventListener("keydown", (event) => {
+        const input = event.target.closest("[data-filter-input]");
+        if (input && event.key === "Enter") {
+          event.preventDefault();
+          addFilter(input.dataset.filterInput);
+        }
+      });
+    })();
+  </script>
 {% endblock %}

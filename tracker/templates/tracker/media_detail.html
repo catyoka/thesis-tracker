@@ -100,6 +100,43 @@
           </div>
         </form>
       </div>
+
+      {% if similar_items %}
+        <div class="detail-action-panel more-like-this">
+          <div class="row" style="justify-content: space-between; margin-bottom: 12px;">
+            <div>
+              <div class="eyebrow">Recommended</div>
+              <h3 style="margin: 4px 0 0;">More like this</h3>
+            </div>
+            {% if item.media_type == "MANGA" %}
+              <a class="button" href="{% url 'tracker:manga_catalog' %}">Browse manga</a>
+            {% else %}
+              <a class="button" href="{% url 'tracker:anime_catalog' %}">Browse anime</a>
+            {% endif %}
+          </div>
+
+          <div class="recommendation-grid">
+            {% for recommendation in similar_items %}
+              <a class="recommendation-card" href="{{ recommendation.detail_url }}">
+                {% if recommendation.item.cover_image_url %}
+                  <img class="recommendation-poster" src="{{ recommendation.item.cover_image_url }}" alt="{{ recommendation.item.title }}" />
+                {% else %}
+                  <span class="recommendation-poster poster-empty">{{ recommendation.item.get_media_type_display }}</span>
+                {% endif %}
+                <span>
+                  <span class="media-title">{{ recommendation.item.title }}</span>
+                  <span class="muted" style="display: block; font-size: 13px; margin-top: 4px;">
+                    {% if recommendation.item.average_score %}Score {{ recommendation.item.average_score }}/100{% else %}{{ recommendation.item.get_media_type_display }}{% endif %}
+                  </span>
+                  {% if recommendation.reason %}
+                    <span class="description" style="display: block;">{{ recommendation.reason }}</span>
+                  {% endif %}
+                </span>
+              </a>
+            {% endfor %}
+          </div>
+        </div>
+      {% endif %}
     </section>
   {% endif %}
 

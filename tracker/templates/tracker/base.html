@@ -1035,6 +1035,12 @@
         gap: 12px;
       }
 
+      .catalog-filter-add-row {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 8px;
+      }
+
       .catalog-filter-actions {
         display: grid;
         grid-template-columns: 1fr 1fr;
@@ -1068,6 +1074,35 @@
       .catalog-filter-chip-list a:hover,
       .catalog-filter-chip-list a.active {
         background: #241436;
+        color: #ffffff;
+      }
+
+      .catalog-selected-filters {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        min-height: 0;
+      }
+
+      .catalog-selected-filter,
+      .catalog-result-filter-chip {
+        gap: 6px;
+        text-decoration: none;
+      }
+
+      .catalog-selected-filter button {
+        min-height: 0;
+        padding: 0 2px;
+        border: 0;
+        background: transparent;
+        box-shadow: none;
+        color: inherit;
+        font-size: 14px;
+        line-height: 1;
+      }
+
+      .catalog-selected-filter button:hover {
+        background: transparent;
         color: #ffffff;
       }
 

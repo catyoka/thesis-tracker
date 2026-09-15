@@ -174,14 +174,18 @@ def _attach_status_labels(entries) -> None:
 
 
 def _query_url(path: str, params: dict) -> str:
-    clean_params = {
-        key: value
-        for key, value in params.items()
-        if value not in {"", None, False}
-    }
+    clean_params = {}
+    for key, value in params.items():
+        if isinstance(value, (list, tuple)):
+            clean_values = [item for item in value if item not in {"", None, False}]
+            if clean_values:
+                clean_params[key] = clean_values
+            continue
+        if value not in {"", None, False}:
+            clean_params[key] = value
     if not clean_params:
         return path
-    return f"{path}?{urlencode(clean_params)}"
+    return f"{path}?{urlencode(clean_params, doseq=True)}"
 
 
 def _status_tabs(
@@ -530,10 +534,28 @@ def _catalog_filter_value(value: str, options: tuple[str, ...]) -> str:
     return canonical_taxonomy_value(value, options)
 
 
-def _catalog_item_matches_filters(item: CatalogItem, *, genre: str = "", tag: str = "") -> bool:
-    if genre and genre not in (item.genres or []):
+def _catalog_filter_values(values: list[str], options: tuple[str, ...]) -> list[str]:
+    selected = []
+    for value in values:
+        canonical = _catalog_filter_value(value, options)
+        if canonical and canonical not in selected:
+            selected.append(canonical)
+    return selected
+
+
+def _catalog_item_matches_filters(
+    item: CatalogItem,
+    *,
+    genres: list[str] | None = None,
+    tags: list[str] | None = None,
+) -> bool:
+    genres = genres or []
+    tags = tags or []
+    item_genres = set(item.genres or [])
+    item_tags = set(item.tags or [])
+    if genres and not set(genres).issubset(item_genres):
         return False
-    if tag and tag not in (item.tags or []):
+    if tags and not set(tags).issubset(item_tags):
         return False
     return True
 
@@ -542,22 +564,63 @@ def _catalog_filter_url(
     base_path: str,
     *,
     query: str = "",
-    genre: str = "",
-    tag: str = "",
+    genres: list[str] | None = None,
+    tags: list[str] | None = None,
 ) -> str:
-    return _query_url(base_path, {"q": query, "genre": genre, "tag": tag})
+    return _query_url(base_path, {"q": query, "genre": genres or [], "tag": tags or []})
 
 
-def _catalog_genre_links(base_path: str, *, query: str, active_genre: str, tag: str) -> list[dict]:
+def _without_filter(values: list[str], value: str) -> list[str]:
+    return [item for item in values if item != value]
+
+
+def _catalog_active_filter_chips(
+    base_path: str,
+    *,
+    query: str,
+    genres: list[str],
+    tags: list[str],
+) -> list[dict]:
+    chips = []
+    for genre in genres:
+        chips.append(
+            {
+                "label": genre,
+                "kind": "Category",
+                "url": _catalog_filter_url(
+                    base_path,
+                    query=query,
+                    genres=_without_filter(genres, genre),
+                    tags=tags,
+                ),
+            }
+        )
+    for tag in tags:
+        chips.append(
+            {
+                "label": tag,
+                "kind": "Tag",
+                "url": _catalog_filter_url(
+                    base_path,
+                    query=query,
+                    genres=genres,
+                    tags=_without_filter(tags, tag),
+                ),
+            }
+        )
+    return chips
+
+
+def _catalog_genre_links(base_path: str, *, query: str, active_genres: list[str], tags: list[str]) -> list[dict]:
     return [
         {
             "label": genre,
-            "active": genre == active_genre,
+            "active": genre in active_genres,
             "url": _catalog_filter_url(
                 base_path,
                 query=query,
-                genre="" if genre == active_genre else genre,
-                tag=tag,
+                genres=_without_filter(active_genres, genre) if genre in active_genres else [*active_genres, genre],
+                tags=tags,
             ),
         }
         for genre in ANILIST_GENRES
@@ -670,6 +733,59 @@ def _recommendations_for(user, *, limit: int = 6) -> tuple[list[dict], list[str]
     ]
     top_genres = [genre for genre, _count in genre_preferences.most_common(4)]
     return recommendations, top_genres
+
+
+def _similar_media_for(item: CatalogItem, user, *, limit: int = 6) -> list[dict]:
+    current_genres = set(item.genres or [])
+    current_tags = set(item.tags or [])
+    if not current_genres and not current_tags:
+        return []
+
+    user_external_ids = set(
+        LibraryEntry.objects.filter(user=user).values_list("external_id", flat=True)
+    )
+    candidates = (
+        CatalogItem.objects.filter(media_type=item.media_type)
+        .exclude(id=item.id)
+        .exclude(external_id__in=user_external_ids)
+        .order_by("-average_score", "title")[:400]
+    )
+    ranked = []
+    for candidate in candidates:
+        shared_genres = sorted(current_genres.intersection(candidate.genres or []))
+        shared_tags = sorted(current_tags.intersection(candidate.tags or []))
+        if not shared_genres and not shared_tags:
+            continue
+
+        score = len(shared_genres) * 30
+        score += len(shared_tags) * 15
+        score += (candidate.average_score or 0) / 10
+        if item.format and candidate.format == item.format:
+            score += 5
+
+        reason_parts = []
+        if shared_genres:
+            reason_parts.append(f"Shares {', '.join(shared_genres[:2])}")
+        if shared_tags:
+            reason_parts.append(f"Similar tags: {', '.join(shared_tags[:2])}")
+
+        ranked.append(
+            {
+                "item": candidate,
+                "detail_url": _catalog_detail_url(candidate),
+                "reason": " + ".join(reason_parts[:2]),
+                "score": score,
+            }
+        )
+
+    ranked.sort(
+        key=lambda row: (
+            -row["score"],
+            -(row["item"].average_score or 0),
+            row["item"].title,
+        )
+    )
+    return ranked[:limit]
 
 
 def _comparison_entry_row(
@@ -1359,8 +1475,8 @@ def media_catalog_page(request: HttpRequest, media_type: str) -> HttpResponse:
         return redirect("tracker:anime_catalog")
 
     query = (request.GET.get("q") or "").strip()
-    active_genre = _catalog_filter_value(request.GET.get("genre") or "", ANILIST_GENRES)
-    active_tag = _catalog_filter_value(request.GET.get("tag") or "", ANILIST_TAGS)
+    active_genres = _catalog_filter_values(request.GET.getlist("genre"), ANILIST_GENRES)
+    active_tags = _catalog_filter_values(request.GET.getlist("tag"), ANILIST_TAGS)
     source_note = "Showing Top 50 popular titles from AniList."
     source_error = ""
     preferred_external_ids: list[str] = []
@@ -1373,8 +1489,8 @@ def media_catalog_page(request: HttpRequest, media_type: str) -> HttpResponse:
             normalized_type,
             query,
             per_page=50,
-            genre=active_genre,
-            tag=active_tag,
+            genres=active_genres,
+            tags=active_tags,
         )
         preferred_external_ids = [data["external_id"] for data in remote_items]
         for data in remote_items:
@@ -1385,8 +1501,8 @@ def media_catalog_page(request: HttpRequest, media_type: str) -> HttpResponse:
             )
         if query:
             source_note = "Showing AniList search results (up to 50), cached locally."
-        if active_genre or active_tag:
-            filters = ", ".join(label for label in [active_genre, active_tag] if label)
+        if active_genres or active_tags:
+            filters = ", ".join([*active_genres, *active_tags])
             source_note = f"Showing AniList results filtered by {filters}, cached locally."
     except RuntimeError:
         source_error = "AniList API is unavailable right now, showing cached data only."
@@ -1394,8 +1510,8 @@ def media_catalog_page(request: HttpRequest, media_type: str) -> HttpResponse:
             source_note = "Showing locally cached search results."
         else:
             source_note = "Showing locally cached popular list."
-        if active_genre or active_tag:
-            filters = ", ".join(label for label in [active_genre, active_tag] if label)
+        if active_genres or active_tags:
+            filters = ", ".join([*active_genres, *active_tags])
             source_note = f"Showing locally cached results filtered by {filters}."
 
     catalog_qs = CatalogItem.objects.filter(media_type=normalized_type)
@@ -1412,11 +1528,11 @@ def media_catalog_page(request: HttpRequest, media_type: str) -> HttpResponse:
         else:
             catalog_items = catalog_items[:100]
 
-    if active_genre or active_tag:
+    if active_genres or active_tags:
         catalog_items = [
             item
             for item in catalog_items
-            if _catalog_item_matches_filters(item, genre=active_genre, tag=active_tag)
+            if _catalog_item_matches_filters(item, genres=active_genres, tags=active_tags)
         ][:50]
     elif not preferred_external_ids:
         catalog_items = catalog_items[:50]
@@ -1455,12 +1571,18 @@ def media_catalog_page(request: HttpRequest, media_type: str) -> HttpResponse:
             "genre_links": _catalog_genre_links(
                 base_path,
                 query=query,
-                active_genre=active_genre,
-                tag=active_tag,
+                active_genres=active_genres,
+                tags=active_tags,
             ),
-            "selected_genre": active_genre,
-            "selected_tag": active_tag,
-            "active_filter_count": len([value for value in (active_genre, active_tag) if value]),
+            "selected_genres": active_genres,
+            "selected_tags": active_tags,
+            "active_filter_chips": _catalog_active_filter_chips(
+                base_path,
+                query=query,
+                genres=active_genres,
+                tags=active_tags,
+            ),
+            "active_filter_count": len(active_genres) + len(active_tags),
             "clear_filters_url": base_path,
             "source_note": source_note,
             "source_error": source_error,
@@ -1505,6 +1627,7 @@ def media_detail_page(request: HttpRequest, media_type: str, item_id: int) -> Ht
     trailer_watch_url = _youtube_trailer_watch_url(item)
     character_items = _character_items_from_detail(detail_data)
     staff_items = _staff_items_from_detail(detail_data)
+    similar_items = _similar_media_for(item, request.user)
     comments = item.comments.select_related("user").order_by("-created_at")[:30]
     active_tab = (request.GET.get("tab") or "overview").strip().lower()
     if active_tab not in MEDIA_DETAIL_TAB_KEYS:
@@ -1520,6 +1643,7 @@ def media_detail_page(request: HttpRequest, media_type: str, item_id: int) -> Ht
             "trailer_watch_url": trailer_watch_url,
             "character_items": character_items,
             "staff_items": staff_items,
+            "similar_items": similar_items,
             "comments": comments,
             "active_tab": active_tab,
             "detail_tabs": _media_detail_tabs(item, active_tab),

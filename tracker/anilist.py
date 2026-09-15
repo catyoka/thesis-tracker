@@ -59,8 +59,8 @@ def fetch_media_catalog(
     query: str,
     *,
     per_page: int = 25,
-    genre: str = "",
-    tag: str = "",
+    genres: list[str] | tuple[str, ...] | None = None,
+    tags: list[str] | tuple[str, ...] | None = None,
 ) -> list[dict]:
     """
     Fetch anime/manga list from AniList GraphQL API.
@@ -119,8 +119,8 @@ def fetch_media_catalog(
             "search": query or None,
             "sort": ["POPULARITY_DESC"],
             "perPage": per_page,
-            "genres": [genre] if genre else None,
-            "tags": [tag] if tag else None,
+            "genres": list(genres or []) or None,
+            "tags": list(tags or []) or None,
         },
     )
 
