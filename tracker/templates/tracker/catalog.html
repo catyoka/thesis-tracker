@@ -9,6 +9,9 @@
 
 {% block content %}
   <section class="card hero-panel">
+    <span class="hero-watermark" aria-hidden="true">
+      {% if selected_media_type == "MANGA" %}Manga{% else %}Anime{% endif %}
+    </span>
     <div>
       <div class="eyebrow">Browse</div>
       <h1 style="margin: 6px 0 0;">
@@ -142,14 +145,14 @@
                 </div>
               {% endif %}
               {% if row.item.genres %}
-                <div class="genre-list">
+                <div class="genre-list media-genres">
                   {% for genre in row.item.genres|slice:":3" %}
                     <span class="pill neutral">{{ genre }}</span>
                   {% endfor %}
                 </div>
               {% endif %}
               {% if row.item.tags %}
-                <div class="genre-list">
+                <div class="genre-list media-tags">
                   {% for tag in row.item.tags|slice:":2" %}
                     <span class="pill neutral">{{ tag }}</span>
                   {% endfor %}

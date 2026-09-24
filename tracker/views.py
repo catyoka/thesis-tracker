@@ -104,10 +104,7 @@ def _require_api_auth(request: HttpRequest) -> HttpResponse | None:
 
 
 def _require_csrf_for_api(request: HttpRequest) -> HttpResponse | None:
-    """
-    API endpoints return JSON errors for unauthenticated requests.
-    CSRF is enforced manually for authenticated unsafe requests.
-    """
+    """I return JSON authentication errors and check CSRF on unsafe API requests."""
     if request.method in {"GET", "HEAD", "OPTIONS", "TRACE"}:
         return None
     if not request.user.is_authenticated:
@@ -735,57 +732,59 @@ def _recommendations_for(user, *, limit: int = 6) -> tuple[list[dict], list[str]
     return recommendations, top_genres
 
 
-def _similar_media_for(item: CatalogItem, user, *, limit: int = 6) -> list[dict]:
-    current_genres = set(item.genres or [])
-    current_tags = set(item.tags or [])
-    if not current_genres and not current_tags:
+def _community_recommendations_from_detail(
+    detail_data: dict | None,
+    current_item: CatalogItem,
+    user,
+    *,
+    limit: int = 6,
+) -> list[dict]:
+    recommendation_nodes = ((detail_data or {}).get("recommendations") or {}).get("nodes") or []
+    if not recommendation_nodes:
         return []
 
     user_external_ids = set(
         LibraryEntry.objects.filter(user=user).values_list("external_id", flat=True)
     )
-    candidates = (
-        CatalogItem.objects.filter(media_type=item.media_type)
-        .exclude(id=item.id)
-        .exclude(external_id__in=user_external_ids)
-        .order_by("-average_score", "title")[:400]
-    )
-    ranked = []
-    for candidate in candidates:
-        shared_genres = sorted(current_genres.intersection(candidate.genres or []))
-        shared_tags = sorted(current_tags.intersection(candidate.tags or []))
-        if not shared_genres and not shared_tags:
+    rows = []
+    seen_external_ids = {current_item.external_id}
+    for recommendation in recommendation_nodes:
+        if not isinstance(recommendation, dict):
+            continue
+        media = recommendation.get("mediaRecommendation") or {}
+        media_id = media.get("id")
+        community_rating = _clean_positive_int(recommendation.get("rating"))
+        if not media_id or not community_rating:
             continue
 
-        score = len(shared_genres) * 30
-        score += len(shared_tags) * 15
-        score += (candidate.average_score or 0) / 10
-        if item.format and candidate.format == item.format:
-            score += 5
+        external_id = f"anilist:{media_id}"
+        if external_id in seen_external_ids or external_id in user_external_ids:
+            continue
 
-        reason_parts = []
-        if shared_genres:
-            reason_parts.append(f"Shares {', '.join(shared_genres[:2])}")
-        if shared_tags:
-            reason_parts.append(f"Similar tags: {', '.join(shared_tags[:2])}")
+        media_type = str(media.get("type") or current_item.media_type).upper()
+        if media_type not in {CatalogItem.MediaType.ANIME, CatalogItem.MediaType.MANGA}:
+            continue
+        defaults = _catalog_defaults_from_media_data(media, media_type)
+        if not defaults["title"]:
+            continue
 
-        ranked.append(
+        recommended_item, _created = CatalogItem.objects.update_or_create(
+            external_id=external_id,
+            defaults=defaults,
+        )
+        rows.append(
             {
-                "item": candidate,
-                "detail_url": _catalog_detail_url(candidate),
-                "reason": " + ".join(reason_parts[:2]),
-                "score": score,
+                "item": recommended_item,
+                "detail_url": _catalog_detail_url(recommended_item),
+                "reason": f"AniList community score +{community_rating}",
+                "source": "AniList community",
+                "score": community_rating,
             }
         )
-
-    ranked.sort(
-        key=lambda row: (
-            -row["score"],
-            -(row["item"].average_score or 0),
-            row["item"].title,
-        )
-    )
-    return ranked[:limit]
+        seen_external_ids.add(external_id)
+        if len(rows) >= limit:
+            break
+    return rows
 
 
 def _comparison_entry_row(
@@ -1627,7 +1626,11 @@ def media_detail_page(request: HttpRequest, media_type: str, item_id: int) -> Ht
     trailer_watch_url = _youtube_trailer_watch_url(item)
     character_items = _character_items_from_detail(detail_data)
     staff_items = _staff_items_from_detail(detail_data)
-    similar_items = _similar_media_for(item, request.user)
+    community_recommendations = _community_recommendations_from_detail(
+        detail_data,
+        item,
+        request.user,
+    )
     comments = item.comments.select_related("user").order_by("-created_at")[:30]
     active_tab = (request.GET.get("tab") or "overview").strip().lower()
     if active_tab not in MEDIA_DETAIL_TAB_KEYS:
@@ -1643,7 +1646,7 @@ def media_detail_page(request: HttpRequest, media_type: str, item_id: int) -> Ht
             "trailer_watch_url": trailer_watch_url,
             "character_items": character_items,
             "staff_items": staff_items,
-            "similar_items": similar_items,
+            "community_recommendations": community_recommendations,
             "comments": comments,
             "active_tab": active_tab,
             "detail_tabs": _media_detail_tabs(item, active_tab),

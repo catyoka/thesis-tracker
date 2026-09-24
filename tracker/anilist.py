@@ -17,7 +17,7 @@ def _anilist_request(gql_query: str, variables: dict) -> dict:
         headers={
             "Content-Type": "application/json",
             "Accept": "application/json",
-            # AniList may reject generic urllib clients without an explicit UA.
+            # I send my own user agent because AniList can reject urllib's default one.
             "User-Agent": "Yulhaverse/0.1 (+https://github.com/catyoka/thesis-tracker)",
             "Origin": "https://anilist.co",
         },
@@ -62,10 +62,7 @@ def fetch_media_catalog(
     genres: list[str] | tuple[str, ...] | None = None,
     tags: list[str] | tuple[str, ...] | None = None,
 ) -> list[dict]:
-    """
-    Fetch anime/manga list from AniList GraphQL API.
-    Returns simplified dictionaries for local caching.
-    """
+    """I fetch AniList catalog results and simplify them for my local cache."""
     gql_query = """
     query (
       $type: MediaType,
@@ -246,6 +243,39 @@ def fetch_media_details(anilist_id: int) -> dict:
           id
           site
           thumbnail
+        }
+        recommendations(sort: [RATING_DESC], page: 1, perPage: 12) {
+          nodes {
+            rating
+            mediaRecommendation {
+              id
+              type
+              title {
+                romaji
+                english
+                native
+              }
+              description(asHtml: false)
+              siteUrl
+              coverImage {
+                large
+                medium
+              }
+              genres
+              tags {
+                name
+                rank
+                isAdult
+              }
+              averageScore
+              episodes
+              chapters
+              volumes
+              format
+              status
+              seasonYear
+            }
+          }
         }
         staff(sort: [RELEVANCE, ID], perPage: 30) {
           edges {

@@ -546,7 +546,7 @@ class LibraryPageTests(TestCase):
         self.assertEqual(item.trailer_site, "youtube")
         self.assertEqual(item.trailer_id, "detailTrailer_1")
 
-    def test_media_detail_shows_more_like_this_recommendations(self):
+    def test_media_detail_does_not_use_a_local_similarity_fallback(self):
         item = CatalogItem.objects.create(
             external_id="local:300",
             title="Current Title",
@@ -573,31 +573,71 @@ class LibraryPageTests(TestCase):
             tags=["Magic"],
             average_score=95,
         )
-        listed = CatalogItem.objects.create(
-            external_id="local:303",
-            title="Already Listed Pick",
-            media_type=CatalogItem.MediaType.ANIME,
-            genres=["Fantasy"],
-            tags=["Found Family"],
-            average_score=91,
-        )
-        LibraryEntry.objects.create(
-            user=self.user,
-            catalog_item=listed,
-            external_id=listed.external_id,
-            title=listed.title,
-            media_type=LibraryEntry.MediaType.ANIME,
-            status=LibraryEntry.Status.WATCHING,
-        )
-
         response = self.client.get(reverse("tracker:anime_detail", args=[item.id]))
 
-        self.assertContains(response, "More like this")
-        self.assertContains(response, "Similar Pick")
-        self.assertContains(response, "Shares Drama")
-        self.assertContains(response, "Similar tags: Magic")
+        self.assertNotContains(response, "AniList community picks")
+        self.assertNotContains(response, "Similar Pick")
         self.assertNotContains(response, "Different Type Pick")
-        self.assertNotContains(response, "Already Listed Pick")
+
+    def test_media_detail_uses_only_anilist_community_recommendations(self):
+        item = CatalogItem.objects.create(
+            external_id="anilist:400",
+            title="Current AniList Title",
+            media_type=CatalogItem.MediaType.ANIME,
+            genres=["Drama"],
+            tags=["Atmospheric"],
+        )
+        CatalogItem.objects.create(
+            external_id="local:401",
+            title="Local Fallback Pick",
+            media_type=CatalogItem.MediaType.ANIME,
+            genres=["Drama"],
+            tags=["Atmospheric"],
+            average_score=90,
+        )
+        detail_data = {
+            "id": 400,
+            "type": "ANIME",
+            "title": {"english": "Current AniList Title"},
+            "genres": ["Drama"],
+            "tags": [{"name": "Atmospheric", "rank": 90, "isAdult": False}],
+            "recommendations": {
+                "nodes": [
+                    {
+                        "rating": 42,
+                        "mediaRecommendation": {
+                            "id": 402,
+                            "type": "ANIME",
+                            "title": {"english": "Community Vibe Pick"},
+                            "description": "Recommended by AniList users.",
+                            "siteUrl": "https://anilist.co/anime/402",
+                            "coverImage": {"large": "https://img.example/community.jpg"},
+                            "genres": ["Drama"],
+                            "tags": [
+                                {"name": "Atmospheric", "rank": 90, "isAdult": False}
+                            ],
+                            "averageScore": 88,
+                            "episodes": 12,
+                            "format": "TV",
+                            "status": "FINISHED",
+                            "seasonYear": 2024,
+                        },
+                    }
+                ]
+            },
+        }
+
+        with patch("tracker.views.fetch_media_details", return_value=detail_data):
+            response = self.client.get(reverse("tracker:anime_detail", args=[item.id]))
+
+        self.assertContains(response, "Community Vibe Pick")
+        self.assertContains(response, "AniList community picks")
+        self.assertContains(response, "AniList community")
+        self.assertContains(response, "AniList community score +42")
+        self.assertNotContains(response, "Local Fallback Pick")
+        cached_item = CatalogItem.objects.get(external_id="anilist:402")
+        self.assertEqual(cached_item.title, "Community Vibe Pick")
+        self.assertEqual(cached_item.tags, ["Atmospheric"])
 
     def test_media_detail_allows_item_comments(self):
         item = CatalogItem.objects.create(

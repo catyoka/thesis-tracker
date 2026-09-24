@@ -213,7 +213,7 @@
       const resp = await fetch(url, opts);
       if (resp.status === 204) return { ok: true, _noContent: true };
       let data = null;
-      try { data = await resp.json(); } catch (e) { /* ignore */ }
+      try { data = await resp.json(); } catch (e) { /* I leave data empty when there is no JSON response. */ }
       if (!resp.ok) {
         const msg = (data && data.message) ? data.message : `Request failed (${resp.status})`;
         const err = new Error(msg);
